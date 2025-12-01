@@ -1,0 +1,15 @@
+#先进行任务的配置，然后进行模型的加载，然后进行模型的评估，最后进行结果的输出
+# GSM8K评测任务的配置文件
+model_path: /data/share/model_weight/llada/LLaDA-8B-Base/
+dataset_path: /data/share/datasets/gsm8k/
+dataset_name: gsm8k
+n_shots: 4
+eval_method:"generation"
+
+# 推理超参数
+#为了能更好的计算，我们是打算用的是原始框架搭配低置信度 （而不是用半自回归策略）
+inference_params:
+  answer_length: 1024
+  sampling_steps: 1024
+  block_length: 1024
+  remask_strategy: "lowest_confidence"

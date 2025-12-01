@@ -1,0 +1,10 @@
+#这里并不取出tokenizer_path,因为这个可以通过tokenizer进行导入
+#也不会涉及permutation_max_size因为要考查的是在不同prompt的位置上进行插入
+train_data_path: "data/trec/train.jsonl"
+test_data_path: "data/trec/dev_subsample.jsonl"
+n_shot: 4
+label_mapping: {'0': 'description', '1': 'entity', '2': 'expression', '3': 'human','4': 'location', '5': 'number'}
+corpus_params: {'sentence_1_str':'sentence','label_str':'label'}
+template: "f'Question: {sentence_1}\\nType: {label_text}\\n\\n'"
+sample_mode: "balance"
+sentence_pair: False

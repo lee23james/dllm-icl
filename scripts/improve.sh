@@ -1,0 +1,8 @@
+# python improve/generate_improve.py --task sudoku --device cuda:2 --model_name /home/share/model_weight/llada/LLaDA-8B-Base --result_path ./results/sudoku_results --lamda1 0.8 --lamda2 0.2 --samples_num 288 --nshot 1 
+# python improve/generate_improve.py --task sudoku --device cuda:2 --model_name /home/share/model_weight/llada/LLaDA-8B-Base --result_path ./results/sudoku_results --lamda1 0.8 --lamda2 0.2 --samples_num 288 --nshot 2 
+# python improve/generate_improve.py --task sudoku --device cuda:2 --model_name /home/share/model_weight/llada/LLaDA-8B-Base --result_path ./results/sudoku_results --lamda1 0.8 --lamda2 0.2 --samples_num 288 --nshot 3 
+python improve/generate_improve.py --task sudoku --device cuda:2 --model_name /home/share/model_weight/llada/LLaDA-8B-Base --result_path ./results/sudoku_results --lamda1 0.8 --lamda2 0.2 --samples_num 288 --nshot 4 
+python improve/generate_improve.py --task sudoku --device cuda:2 --model_name /home/share/model_weight/llada/LLaDA-8B-Base --result_path ./results/sudoku_results --lamda1 0.8 --lamda2 0.2 --samples_num 288 --nshot 5 
+# python improve/generate_improve.py --task sudoku --device cuda:2 --model_name /home/share/model_weight/llada/LLaDA-8B-Base --result_path ./results/sudoku_results --lamda1 0.8 --lamda2 0.2 --samples_num 288 --nshot 6 
+# python improve/generate_improve.py --task sudoku --device cuda:2 --model_name /home/share/model_weight/llada/LLaDA-8B-Base --result_path ./results/sudoku_results --lamda1 0.8 --lamda2 0.2 --samples_num 288 --nshot 7 
+# python improve/generate_improve.py --task sudoku --device cuda:2 --model_name /home/share/model_weight/llada/LLaDA-8B-Base --result_path ./results/sudoku_results --lamda1 0.8 --lamda2 0.2 --samples_num 288 --nshot 8 

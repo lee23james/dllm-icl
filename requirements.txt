@@ -1,0 +1,26 @@
+# Minimal requirements for LLaDA-ICL
+# 
+# IMPORTANT: Install PyTorch with CUDA support first!
+# Example for CUDA 12.4:
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+# 
+# For other CUDA versions, check: https://pytorch.org/get-started/locally/
+# 
+# Core dependencies
+torch>=2.0.0
+transformers>=4.30.0
+numpy>=1.20.0
+tqdm>=4.60.0
+
+# Optional but recommended for visualization
+matplotlib>=3.5.0
+seaborn>=0.12.0
+
+# Optional but used in some scripts
+pyyaml>=6.0
+easydict>=1.10
+
+# Transformers dependencies (usually installed automatically)
+# safetensors>=0.3.0  # For faster model loading
+# tokenizers>=0.13.0   # For tokenization
+# huggingface-hub>=0.16.0  # For model downloading

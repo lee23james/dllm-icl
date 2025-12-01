@@ -1,0 +1,34 @@
+__pycache__/
+*.pyc
+
+# Result files and logs
+results/
+results_*/
+IEAR_results_*/
+batch_analysis_*_results_*/
+*.log
+# *.jsonl
+# *.json
+!requirements.json
+!package.json
+
+# Analysis output directories
+llada_gsm8k_eval/results_*/
+llada_gsm8k_eval/IEAR_results_*/
+llada_gsm8k_eval/batch_analysis_*_results_*/
+
+# Generated analysis images
+*.png
+*.jpg
+*.jpeg
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# Temporary files
+*.tmp
+*.temp
+llada_gsm8k_eval/temp_attention_weights/
+
+# Parameters and configuration files
+params/
