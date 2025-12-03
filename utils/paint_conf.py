@@ -5,7 +5,9 @@ import seaborn as sns
 import numpy as np
 import json, os
 import argparse
+import re
 from pathlib import Path
+from datetime import datetime
 #画出我想要的指标(总共画五张图)-》一个样本五个子图
 # 1. conf变化,关注最后的曲线变化情况(digit、zero、other digit)
 # 2. area变化,绘制平均值(长、宽、高)
@@ -317,6 +319,64 @@ def generate_conf_plots(json_dir, sample_index=0, task='sudoku',output_dir=None)
     plt.close()
 
 
+# 辅助函数：查找指定目录下最新的时间戳 JSON 文件（标准格式：YYYYMMDD_HHMMSS）
+def find_latest_timestamp_json(directory, pattern_prefix):
+    """
+    在指定目录下查找匹配 pattern_prefix_{timestamp}.json 格式的最新文件
+    时间戳格式：YYYYMMDD_HHMMSS (例如：20251129_091605)
+    返回文件路径和时间戳字符串
+    """
+    if not os.path.exists(directory):
+        return None, None
+    
+    pattern = re.compile(rf'^{re.escape(pattern_prefix)}_(\d{{8}}_\d{{6}})\.json$')
+    matching_files = []
+    
+    for filename in os.listdir(directory):
+        match = pattern.match(filename)
+        if match:
+            timestamp_str = match.group(1)
+            filepath = os.path.join(directory, filename)
+            matching_files.append((filepath, timestamp_str))
+    
+    if not matching_files:
+        return None, None
+    
+    # 按时间戳排序，返回最新的
+    matching_files.sort(key=lambda x: x[1], reverse=True)
+    return matching_files[0]
+
+# 辅助函数：查找指定目录下最新的时间戳 JSON 文件（MBPP accuracy 格式：YYYY-MM-DD_HH-MM-SS）
+def find_latest_timestamp_json_mbpp(directory, pattern_prefix):
+    """
+    在指定目录下查找匹配 pattern_prefix_{timestamp}.json 格式的最新文件
+    时间戳格式：YYYY-MM-DD_HH-MM-SS (例如：2025-11-29_11-00-19)
+    返回文件路径和时间戳字符串
+    """
+    if not os.path.exists(directory):
+        return None, None
+    
+    pattern = re.compile(
+      rf'^{re.escape(pattern_prefix)}(?:_accuracy)?_(\d{{4}}-\d{{2}}-\d{{2}}_\d{{2}}-\d{{2}}-\d{{2}})\.json$'
+  )
+    matching_files = []
+    
+    for filename in os.listdir(directory):
+        match = pattern.match(filename)
+        if match:
+            timestamp_str = match.group(1)
+            filepath = os.path.join(directory, filename)
+            # 为了排序，将时间戳转换为可比较的格式（去掉连字符）
+            sort_key = timestamp_str.replace('-', '')
+            matching_files.append((filepath, timestamp_str, sort_key))
+    
+    if not matching_files:
+        return None, None
+    
+    # 按时间戳排序，返回最新的
+    matching_files.sort(key=lambda x: x[2], reverse=True)
+    return matching_files[0][0], matching_files[0][1]
+
 #这边我想创建一个函数,用于生成相应的关系函数
 #给出json所在的目录,方便去获取对应位置的json文件夹,之后去获取熵值和准确率的关系
 def generate_conf_accuracy_plot(
@@ -325,87 +385,181 @@ def generate_conf_accuracy_plot(
     output_dir=None,
     num_shots=None,
     num_steps=None,
+    num_gen_lengths=None,
 ):
     """
-    在“同一 task + shot + step”组里，对所有 position 的
-    digit_symbol mean_of_means（x轴）与 accuracy（y轴）画散点图。
+    在"同一 task + shot + step + gen_length"组里，对所有 position 的
+    answer_positions mean_of_means（x轴）与 accuracy（y轴）画散点图。
+    
+    对于非 mbpp 任务：从 json_dir/nshot_{nshot}/position_{position}/step_{steps}_gen_{gen_length}_{timestamp}.json 读取
+    对于 mbpp 任务：从 json_dir/accuracy/step_{steps}_gen_{gen_length}_nshot_{nshot}_{timestamp}.json 读取
     """
     if output_dir is None:
         output_dir = json_dir
     os.makedirs(output_dir, exist_ok=True)
 
     default_shots = [3, 4, 5, 6, 7, 8, 9, 10]
-    default_steps = [16, 32]
-    shot_list = num_shots if num_shots is not None else default_shots
-    step_list = num_steps if num_steps is not None else default_steps
+    default_steps = [16, 32, 64, 128]
+    default_gen_lengths = [128]
+    # 兼容命令行传入的是单个 int 的情况：统一转成列表
+    if num_shots is None:
+        shot_list = default_shots
+    elif isinstance(num_shots, int):
+        shot_list = [num_shots]
+    else:
+        shot_list = list(num_shots)
 
-    groups = {}  # key=(nshot, step), value=list of dicts
+    if num_steps is None:
+        step_list = default_steps
+    elif isinstance(num_steps, int):
+        step_list = [num_steps]
+    else:
+        step_list = list(num_steps)
+
+    if num_gen_lengths is None:
+        gen_length_list = default_gen_lengths
+    elif isinstance(num_gen_lengths, int):
+        gen_length_list = [num_gen_lengths]
+    else:
+        gen_length_list = list(num_gen_lengths)
+
+    groups = {}  # key=(nshot, step, gen_length), value=list of dicts
     all_entries = []
-    #这里是按照key、value的方式进行计算,看能不能满足需求,同时通过相关区域进行离散点的计算
-    #现在问题就是看能不能通过不同的task来区分不同的数据情况
-    for nshot in shot_list:
-        for step in step_list:
-            key = (nshot, step)
-            groups[key] = []
-            for pos in range(nshot + 1):
-                json_file = os.path.join(
-                    json_dir, f'{task}_shot_{nshot}_position_{pos}_step_{step}.json'
-                )
-                if not os.path.exists(json_file):
-                    print(
-                        f"Warning: {json_file} not found, skipping shot_{nshot}_position_{pos}_step_{step}"
-                    )
-                    continue
+    current_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    if task == 'mbpp':
+        # MBPP 任务：从 accuracy 子文件夹读取
+        accuracy_dir = os.path.join(json_dir, 'accuracy')
+        if not os.path.exists(accuracy_dir):
+            print(f"Warning: accuracy directory not found: {accuracy_dir}")
+            return
+        
+        for nshot in shot_list:
+            for step in step_list:
+                for gen_length in gen_length_list:
+                    key = (nshot, step, gen_length)
+                    groups[key] = []
+                    
+                    # 查找最新的 accuracy JSON 文件（MBPP 使用不同的时间戳格式）
+                    pattern_prefix = f'step_{step}_gen_{gen_length}_nshot_{nshot}'
+                    json_file, timestamp = find_latest_timestamp_json_mbpp(accuracy_dir, pattern_prefix)
+                    
+                    if json_file is None:
+                        print(f"Warning: No accuracy file found for shot={nshot}, step={step}, gen_length={gen_length}")
+                        continue
+                    
+                    data = load_json_or_jsonl(json_file)
+                    accuracy_list = data.get('Accuracy', [])
+                    
+                    if len(accuracy_list) != nshot + 1:
+                        print(f"Warning: Accuracy list length ({len(accuracy_list)}) doesn't match nshot+1 ({nshot+1})")
+                        continue
+                    
+                    # 对于 MBPP，我们需要从其他 JSON 文件中获取 conf 值
+                    # 这里假设 conf 数据在相同目录结构下
+                    for pos in range(nshot + 1):
+                        nshot_dir = os.path.join(json_dir, f'nshot_{nshot}')
+                        position_dir = os.path.join(nshot_dir, f'position_{pos}')
+                        pattern_prefix_conf = f'step_{step}_gen_{gen_length}'
+                        conf_json_file, _ = find_latest_timestamp_json(position_dir, pattern_prefix_conf)
+                        
+                        conf_digit_symbol = None
+                        current_conf_digit_symbol = None
+                        if conf_json_file and os.path.exists(conf_json_file):
+                            conf_data = load_json_or_jsonl(conf_json_file)
+                            all_samples = conf_data.get('all_samples_result', {})
+                            conf_dict = all_samples.get('conf', {})
+                            answer_positions = conf_dict.get('answer_positions', {})
+                            conf_digit_symbol = answer_positions.get('mean_of_means')
+                            
+                            # 获取 current_conf
+                            current_conf_dict = all_samples.get('current_conf', {})
+                            current_answer_positions = current_conf_dict.get('answer_positions', {})
+                            current_conf_digit_symbol = current_answer_positions.get('mean_of_means')
+                        
+                        accuracy = accuracy_list[pos] if pos < len(accuracy_list) else None
+                        
+                        if conf_digit_symbol is None or accuracy is None:
+                            print(f"Warning: Missing conf or accuracy for position {pos}, skipping.")
+                            continue
+                        
+                        entry = {
+                            'position': pos,
+                            'conf': float(conf_digit_symbol),
+                            'current_conf': float(current_conf_digit_symbol) if current_conf_digit_symbol is not None else None,
+                            'accuracy': float(accuracy),
+                            'shot': nshot,
+                            'step': step,
+                            'gen_length': gen_length,
+                        }
+                        groups[key].append(entry)
+                        all_entries.append(entry)
+    else:
+        # 非 MBPP 任务：从 nshot_{nshot}/position_{position}/ 读取
+        for nshot in shot_list:
+            nshot_dir = os.path.join(json_dir, f'nshot_{nshot}')
+            if not os.path.exists(nshot_dir):
+                print(f"Warning: nshot_{nshot} directory not found, skipping.")
+                continue
+            
+            for step in step_list:
+                for gen_length in gen_length_list:
+                    key = (nshot, step, gen_length)
+                    groups[key] = []
+                    
+                    for pos in range(nshot + 1):
+                        position_dir = os.path.join(nshot_dir, f'position_{pos}')
+                        if not os.path.exists(position_dir):
+                            print(f"Warning: position_{pos} directory not found in nshot_{nshot}, skipping.")
+                            continue
+                        
+                        # 查找最新的时间戳 JSON 文件
+                        pattern_prefix = f'step_{step}_gen_{gen_length}'
+                        json_file, timestamp = find_latest_timestamp_json(position_dir, pattern_prefix)
+                        
+                        if json_file is None:
+                            print(f"Warning: No JSON file found for nshot={nshot}, position={pos}, step={step}, gen_length={gen_length}")
+                            continue
+                        
+                        data = load_json_or_jsonl(json_file)
+                        metadata = data.get('metadata', {})
+                        all_samples = data.get('all_samples_result', {})
+                        
+                        # 从 conf.answer_positions.mean_of_means 获取值
+                        conf_dict = all_samples.get('conf', {})
+                        answer_positions = conf_dict.get('answer_positions', {})
+                        conf_digit_symbol = answer_positions.get('mean_of_means')
+                        
+                        accuracy = metadata.get('accuracy')
+                        
+                        if conf_digit_symbol is None or accuracy is None:
+                            print(f"Warning: Missing conf or accuracy in {json_file}, skipping.")
+                            continue
+                        
+                        entry = {
+                            'position': pos,
+                            'conf': float(conf_digit_symbol),
+                            'accuracy': float(accuracy),
+                            'shot': nshot,
+                            'step': step,
+                            'gen_length': gen_length,
+                        }
+                        groups[key].append(entry)
+                        all_entries.append(entry)
 
-                data = load_json_or_jsonl(json_file)
-                metadata = data.get('metadata', {})
-                all_samples = data.get('all_samples_result', {})
-                #不同的位置,想要观察的信息不太一致,所以我在这里对于task进行相应的分析
-                #不同的文件但是遍历那个映射的是相同的需要去关注的地方
-                if task =='countdown':
-                    conf_digit_symbol = (
-                        all_samples.get('conf', {})
-                        .get('digit_symbol', {})
-                        .get('mean_of_means')
-                    )
-                elif task=='sudoku':
-                    conf_digit_symbol =(
-                        all_samples.get('conf',{})
-                        .get('digit',{})
-                        .get('mean_of_means')
-                    )
-                else:
-                    raise NotImplementedError(f"Task {task} not implemented.")
-
-                accuracy = metadata.get('accuracy')
-
-                if conf_digit_symbol is None or accuracy is None:
-                    print(
-                        f"Warning: Missing conf or accuracy in {json_file}, skipping."
-                    )
-                    continue
-                entry = {
-                    'position': pos,
-                    'conf': float(conf_digit_symbol),
-                    'accuracy': float(accuracy),
-                    'shot': nshot,
-                    'step': step,
-                }
-                groups[key].append(entry)
-                all_entries.append(entry)
-
-    for (nshot, step), entries in groups.items():
+    # 为每个 (nshot, step, gen_length) 组合生成图像（单个子图：conf vs accuracy）
+    for (nshot, step, gen_length), entries in groups.items():
         if len(entries) == 0:
             continue
-
+        
         fig, ax = plt.subplots(figsize=(7, 5))
         conf_vals = [entry['conf'] for entry in entries]
         acc_vals = [entry['accuracy'] for entry in entries]
-
+        
         scatter = ax.scatter(
             conf_vals, acc_vals, c=conf_vals, cmap='viridis', s=60, edgecolor='black'
         )
-
+        
         for entry in entries:
             ax.text(
                 entry['conf'],
@@ -415,24 +569,31 @@ def generate_conf_accuracy_plot(
                 ha='left',
                 va='bottom',
             )
-
-        ax.set_xlabel('digit_symbol mean_of_means', fontsize=12)
+        
+        ax.set_xlabel('answer_positions mean_of_means', fontsize=12)
         ax.set_ylabel('Accuracy', fontsize=12)
-        ax.set_title(f'{task} | shot={nshot}, step={step}', fontsize=14, fontweight='bold')
+        ax.set_title(f'{task} | shot={nshot}, step={step}, gen_length={gen_length}', fontsize=14, fontweight='bold')
         ax.grid(True, alpha=0.3)
         fig.colorbar(scatter, ax=ax, label='Conf Value')
-
-        output_path = os.path.join(output_dir, f'{task}_shot_{nshot}_step_{step}.png')
+        
+        # 输出路径：output_dir/task/shot_{nshot}/step_{step}_gen_{gen_length}/accuracy_{timestamp}.png
+        task_output_dir = os.path.join(output_dir, task)
+        shot_dir = os.path.join(task_output_dir, f'shot_{nshot}')
+        step_gen_dir = os.path.join(shot_dir, f'step_{step}_gen_{gen_length}')
+        os.makedirs(step_gen_dir, exist_ok=True)
+        
+        output_path = os.path.join(step_gen_dir, f'accuracy_{current_timestamp}.png')
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close(fig)
         print(f'已保存图像: {output_path}')
-
+    
+    # 生成总图：所有 shot、step、gen_length 的数据点（单个子图）
     if len(all_entries) > 0:
         fig, ax = plt.subplots(figsize=(8, 6))
         conf_vals = [entry['conf'] for entry in all_entries]
         acc_vals = [entry['accuracy'] for entry in all_entries]
         colors = [entry['shot'] for entry in all_entries]
-
+        
         scatter = ax.scatter(
             conf_vals,
             acc_vals,
@@ -441,14 +602,328 @@ def generate_conf_accuracy_plot(
             s=60,
             edgecolor='black',
         )
-        ax.set_xlabel('digit_symbol mean_of_means', fontsize=12)
+        ax.set_xlabel('answer_positions mean_of_means', fontsize=12)
         ax.set_ylabel('Accuracy', fontsize=12)
         ax.set_title(f'{task} | All shots & steps', fontsize=14, fontweight='bold')
         ax.grid(True, alpha=0.3)
         cbar = fig.colorbar(scatter, ax=ax)
         cbar.set_label('Shot Number')
+        
+        # 输出路径：output_dir/task/all_shot/accuracy_{timestamp}.png
+        task_output_dir = os.path.join(output_dir, task)
+        all_shot_dir = os.path.join(task_output_dir, 'all_shot')
+        os.makedirs(all_shot_dir, exist_ok=True)
+        
+        output_path = os.path.join(all_shot_dir, f'accuracy_{current_timestamp}.png')
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        print(f'已保存图像: {output_path}')
 
-        output_path = os.path.join(output_dir, f'{task}_all_shots_steps.png')
+def generate_accuracy_plot(
+    json_dir,
+    task='sudoku',
+    output_dir=None,
+    num_shots=None,
+    num_steps=None,
+    num_gen_lengths=None,
+):
+    """
+    在"同一 task + shot + step + gen_length"组里，对所有 position 的
+    conf 和 current_conf 的 answer_positions mean_of_means（x轴）与 accuracy（y轴）画散点图。
+    生成两个子图：左边 conf vs accuracy，右边 current_conf vs accuracy。
+    
+    对于非 mbpp 任务：从 json_dir/nshot_{nshot}/position_{position}/step_{steps}_gen_{gen_length}_{timestamp}.json 读取
+    对于 mbpp 任务：从 json_dir/accuracy/step_{steps}_gen_{gen_length}_nshot_{nshot}_{timestamp}.json 读取
+    """
+    if output_dir is None:
+        output_dir = json_dir
+    os.makedirs(output_dir, exist_ok=True)
+
+    default_shots = [3, 4, 5, 6, 7, 8, 9, 10]
+    default_steps = [16, 32, 64, 128]
+    default_gen_lengths = [128]
+    # 兼容命令行传入的是单个 int 的情况：统一转成列表
+    if num_shots is None:
+        shot_list = default_shots
+    elif isinstance(num_shots, int):
+        shot_list = [num_shots]
+    else:
+        shot_list = list(num_shots)
+
+    if num_steps is None:
+        step_list = default_steps
+    elif isinstance(num_steps, int):
+        step_list = [num_steps]
+    else:
+        step_list = list(num_steps)
+
+    if num_gen_lengths is None:
+        gen_length_list = default_gen_lengths
+    elif isinstance(num_gen_lengths, int):
+        gen_length_list = [num_gen_lengths]
+    else:
+        gen_length_list = list(num_gen_lengths)
+
+    groups = {}  # key=(nshot, step, gen_length), value=list of dicts
+    all_entries = []
+    current_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    if task == 'mbpp':
+        # MBPP 任务：从 accuracy 子文件夹读取
+        accuracy_dir = os.path.join(json_dir, 'accuracy')
+        if not os.path.exists(accuracy_dir):
+            print(f"Warning: accuracy directory not found: {accuracy_dir}")
+            return
+        
+        for nshot in shot_list:
+            for step in step_list:
+                for gen_length in gen_length_list:
+                    key = (nshot, step, gen_length)
+                    groups[key] = []
+                    
+                    # 查找最新的 accuracy JSON 文件（MBPP 使用不同的时间戳格式）
+                    pattern_prefix = f'step_{step}_gen_{gen_length}_nshot_{nshot}'
+                    json_file, timestamp = find_latest_timestamp_json_mbpp(accuracy_dir, pattern_prefix)
+                    
+                    if json_file is None:
+                        print(f"Warning: No accuracy file found for shot={nshot}, step={step}, gen_length={gen_length}")
+                        continue
+                    
+                    data = load_json_or_jsonl(json_file)
+                    accuracy_list = data.get('Accuracy', [])
+                    
+                    if len(accuracy_list) != nshot + 1:
+                        print(f"Warning: Accuracy list length ({len(accuracy_list)}) doesn't match nshot+1 ({nshot+1})")
+                        continue
+                    
+                    # 对于 MBPP，我们需要从其他 JSON 文件中获取 current_conf 值
+                    for pos in range(nshot + 1):
+                        nshot_dir = os.path.join(json_dir, f'nshot_{nshot}')
+                        position_dir = os.path.join(nshot_dir, f'position_{pos}')
+                        pattern_prefix_conf = f'step_{step}_gen_{gen_length}'
+                        conf_json_file, _ = find_latest_timestamp_json(position_dir, pattern_prefix_conf)
+                        
+                        conf_digit_symbol = None
+                        current_conf_digit_symbol = None
+                        if conf_json_file and os.path.exists(conf_json_file):
+                            conf_data = load_json_or_jsonl(conf_json_file)
+                            all_samples = conf_data.get('all_samples_result', {})
+                            
+                            # 获取 conf
+                            conf_dict = all_samples.get('conf', {})
+                            answer_positions = conf_dict.get('answer_positions', {})
+                            conf_digit_symbol = answer_positions.get('mean_of_means')
+                            
+                            # 获取 current_conf
+                            current_conf_dict = all_samples.get('current_conf', {})
+                            current_answer_positions = current_conf_dict.get('answer_positions', {})
+                            current_conf_digit_symbol = current_answer_positions.get('mean_of_means')
+                        
+                        accuracy = accuracy_list[pos] if pos < len(accuracy_list) else None
+                        
+                        if conf_digit_symbol is None or accuracy is None:
+                            print(f"Warning: Missing conf or accuracy for position {pos}, skipping.")
+                            continue
+                        
+                        entry = {
+                            'position': pos,
+                            'conf': float(conf_digit_symbol),
+                            'current_conf': float(current_conf_digit_symbol) if current_conf_digit_symbol is not None else None,
+                            'accuracy': float(accuracy),
+                            'shot': nshot,
+                            'step': step,
+                            'gen_length': gen_length,
+                        }
+                        groups[key].append(entry)
+                        all_entries.append(entry)
+    else:
+        # 非 MBPP 任务：从 nshot_{nshot}/position_{position}/ 读取
+        for nshot in shot_list:
+            nshot_dir = os.path.join(json_dir, f'nshot_{nshot}')
+            if not os.path.exists(nshot_dir):
+                print(f"Warning: nshot_{nshot} directory not found, skipping.")
+                continue
+            
+            for step in step_list:
+                for gen_length in gen_length_list:
+                    key = (nshot, step, gen_length)
+                    groups[key] = []
+                    
+                    for pos in range(nshot + 1):
+                        position_dir = os.path.join(nshot_dir, f'position_{pos}')
+                        if not os.path.exists(position_dir):
+                            print(f"Warning: position_{pos} directory not found in nshot_{nshot}, skipping.")
+                            continue
+                        
+                        # 查找最新的时间戳 JSON 文件
+                        pattern_prefix = f'step_{step}_gen_{gen_length}'
+                        json_file, timestamp = find_latest_timestamp_json(position_dir, pattern_prefix)
+                        
+                        if json_file is None:
+                            print(f"Warning: No JSON file found for nshot={nshot}, position={pos}, step={step}, gen_length={gen_length}")
+                            continue
+                        
+                        data = load_json_or_jsonl(json_file)
+                        metadata = data.get('metadata', {})
+                        all_samples = data.get('all_samples_result', {})
+                        
+                        # 从 conf.answer_positions.mean_of_means 获取值
+                        conf_dict = all_samples.get('conf', {})
+                        answer_positions = conf_dict.get('answer_positions', {})
+                        conf_digit_symbol = answer_positions.get('mean_of_means')
+                        
+                        # 从 current_conf.answer_positions.mean_of_means 获取值
+                        current_conf_dict = all_samples.get('current_conf', {})
+                        current_answer_positions = current_conf_dict.get('answer_positions', {})
+                        current_conf_digit_symbol = current_answer_positions.get('mean_of_means')
+                        
+                        accuracy = metadata.get('accuracy')
+                        
+                        if conf_digit_symbol is None or accuracy is None:
+                            print(f"Warning: Missing conf or accuracy in {json_file}, skipping.")
+                            continue
+                        
+                        entry = {
+                            'position': pos,
+                            'conf': float(conf_digit_symbol),
+                            'current_conf': float(current_conf_digit_symbol) if current_conf_digit_symbol is not None else None,
+                            'accuracy': float(accuracy),
+                            'shot': nshot,
+                            'step': step,
+                            'gen_length': gen_length,
+                        }
+                        groups[key].append(entry)
+                        all_entries.append(entry)
+
+    # 为每个 (nshot, step, gen_length) 组合生成图像（两个子图：左边 conf，右边 current_conf）
+    for (nshot, step, gen_length), entries in groups.items():
+        if len(entries) == 0:
+            continue
+        
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        conf_vals = [entry['conf'] for entry in entries]
+        acc_vals = [entry['accuracy'] for entry in entries]
+        current_conf_vals = [entry.get('current_conf') for entry in entries if entry.get('current_conf') is not None]
+        current_acc_vals = [entry['accuracy'] for entry in entries if entry.get('current_conf') is not None]
+        
+        # 左子图：conf vs accuracy
+        ax_left = axes[0]
+        scatter_left = ax_left.scatter(
+            conf_vals, acc_vals, c=conf_vals, cmap='viridis', s=60, edgecolor='black'
+        )
+        
+        for entry in entries:
+            ax_left.text(
+                entry['conf'],
+                entry['accuracy'],
+                f"pos {entry['position']}",
+                fontsize=8,
+                ha='left',
+                va='bottom',
+            )
+        
+        ax_left.set_xlabel('answer_positions mean_of_means', fontsize=12)
+        ax_left.set_ylabel('Accuracy', fontsize=12)
+        ax_left.set_title(f'Conf vs Accuracy', fontsize=13, fontweight='bold')
+        ax_left.grid(True, alpha=0.3)
+        fig.colorbar(scatter_left, ax=ax_left, label='Conf Value')
+        
+        # 右子图：current_conf vs accuracy
+        ax_right = axes[1]
+        if len(current_conf_vals) > 0:
+            scatter_right = ax_right.scatter(
+                current_conf_vals, current_acc_vals, c=current_conf_vals, cmap='viridis', s=60, edgecolor='black'
+            )
+            
+            for entry in entries:
+                if entry.get('current_conf') is not None:
+                    ax_right.text(
+                        entry['current_conf'],
+                        entry['accuracy'],
+                        f"pos {entry['position']}",
+                        fontsize=8,
+                        ha='left',
+                        va='bottom',
+                    )
+            
+            ax_right.set_xlabel('current_conf answer_positions mean_of_means', fontsize=12)
+            ax_right.set_ylabel('Accuracy', fontsize=12)
+            ax_right.set_title(f'Current Conf vs Accuracy', fontsize=13, fontweight='bold')
+            ax_right.grid(True, alpha=0.3)
+            fig.colorbar(scatter_right, ax=ax_right, label='Current Conf Value')
+        else:
+            ax_right.text(0.5, 0.5, 'No current_conf data', ha='center', va='center', transform=ax_right.transAxes)
+            ax_right.set_title(f'Current Conf vs Accuracy', fontsize=13, fontweight='bold')
+        
+        fig.suptitle(f'{task} | shot={nshot}, step={step}, gen_length={gen_length}', fontsize=14, fontweight='bold', y=1.02)
+        
+        # 输出路径：output_dir/task/shot_{nshot}/step_{step}_gen_{gen_length}/accuracy_{timestamp}.png
+        task_output_dir = os.path.join(output_dir, task)
+        shot_dir = os.path.join(task_output_dir, f'shot_{nshot}')
+        step_gen_dir = os.path.join(shot_dir, f'step_{step}_gen_{gen_length}')
+        os.makedirs(step_gen_dir, exist_ok=True)
+        
+        output_path = os.path.join(step_gen_dir, f'accuracy_{current_timestamp}.png')
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        print(f'已保存图像: {output_path}')
+    
+    # 生成总图：所有 shot、step、gen_length 的数据点（两个子图）
+    if len(all_entries) > 0:
+        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+        conf_vals = [entry['conf'] for entry in all_entries]
+        acc_vals = [entry['accuracy'] for entry in all_entries]
+        colors = [entry['shot'] for entry in all_entries]
+        current_conf_vals = [entry.get('current_conf') for entry in all_entries if entry.get('current_conf') is not None]
+        current_acc_vals = [entry['accuracy'] for entry in all_entries if entry.get('current_conf') is not None]
+        current_colors = [entry['shot'] for entry in all_entries if entry.get('current_conf') is not None]
+        
+        # 左子图：conf vs accuracy
+        ax_left = axes[0]
+        scatter_left = ax_left.scatter(
+            conf_vals,
+            acc_vals,
+            c=colors,
+            cmap='plasma',
+            s=60,
+            edgecolor='black',
+        )
+        ax_left.set_xlabel('answer_positions mean_of_means', fontsize=12)
+        ax_left.set_ylabel('Accuracy', fontsize=12)
+        ax_left.set_title(f'Conf vs Accuracy', fontsize=13, fontweight='bold')
+        ax_left.grid(True, alpha=0.3)
+        cbar_left = fig.colorbar(scatter_left, ax=ax_left)
+        cbar_left.set_label('Shot Number')
+        
+        # 右子图：current_conf vs accuracy
+        ax_right = axes[1]
+        if len(current_conf_vals) > 0:
+            scatter_right = ax_right.scatter(
+                current_conf_vals,
+                current_acc_vals,
+                c=current_colors,
+                cmap='plasma',
+                s=60,
+                edgecolor='black',
+            )
+            ax_right.set_xlabel('current_conf answer_positions mean_of_means', fontsize=12)
+            ax_right.set_ylabel('Accuracy', fontsize=12)
+            ax_right.set_title(f'Current Conf vs Accuracy', fontsize=13, fontweight='bold')
+            ax_right.grid(True, alpha=0.3)
+            cbar_right = fig.colorbar(scatter_right, ax=ax_right)
+            cbar_right.set_label('Shot Number')
+        else:
+            ax_right.text(0.5, 0.5, 'No current_conf data', ha='center', va='center', transform=ax_right.transAxes)
+            ax_right.set_title(f'Current Conf vs Accuracy', fontsize=13, fontweight='bold')
+        
+        fig.suptitle(f'{task} | All shots & steps', fontsize=14, fontweight='bold', y=1.02)
+        
+        # 输出路径：output_dir/task/all_shot/accuracy_{timestamp}.png
+        task_output_dir = os.path.join(output_dir, task)
+        all_shot_dir = os.path.join(task_output_dir, 'all_shot')
+        os.makedirs(all_shot_dir, exist_ok=True)
+        
+        output_path = os.path.join(all_shot_dir, f'accuracy_{current_timestamp}.png')
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close(fig)
         print(f'已保存图像: {output_path}')
@@ -459,71 +934,174 @@ def generate_tokenchange_accuracy_plot(
     output_dir=None,
     num_shots=None,
     num_steps=None,
+    num_gen_lengths=None,
 ):
     """
-    在"同一 task + shot + step"组里，对所有 position 的
+    在"同一 task + shot + step + gen_length"组里，对所有 position 的
     area/token_span/step_span/token_change_total（x轴）与 accuracy（y轴）画散点图。
-    每个 (shot, step) 组合生成一张包含四个子图的图：area vs accuracy, token_span vs accuracy, step_span vs accuracy, token_change_total vs accuracy
+    每个 (shot, step, gen_length) 组合生成一张包含四个子图的图：area vs accuracy, token_span vs accuracy, step_span vs accuracy, token_change_total vs accuracy
     """
     if output_dir is None:
         output_dir = json_dir
     os.makedirs(output_dir, exist_ok=True)
 
     default_shots = [3, 4, 5, 6, 7, 8, 9, 10]
-    default_steps = [16, 32]
-    shot_list = num_shots if num_shots is not None else default_shots
-    step_list = num_steps if num_steps is not None else default_steps
+    default_steps = [16, 32, 64, 128]
+    default_gen_lengths = [128]
+    # 兼容命令行传入的是单个 int 的情况：统一转成列表
+    if num_shots is None:
+        shot_list = default_shots
+    elif isinstance(num_shots, int):
+        shot_list = [num_shots]
+    else:
+        shot_list = list(num_shots)
 
-    groups = {}  # key=(nshot, step), value=list of dicts
+    if num_steps is None:
+        step_list = default_steps
+    elif isinstance(num_steps, int):
+        step_list = [num_steps]
+    else:
+        step_list = list(num_steps)
+
+    if num_gen_lengths is None:
+        gen_length_list = default_gen_lengths
+    elif isinstance(num_gen_lengths, int):
+        gen_length_list = [num_gen_lengths]
+    else:
+        gen_length_list = list(num_gen_lengths)
+
+    groups = {}  # key=(nshot, step, gen_length), value=list of dicts
     all_entries = []
+    current_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
-    for nshot in shot_list:
-        for step in step_list:
-            key = (nshot, step)
-            groups[key] = []
-            for pos in range(nshot + 1):
-                json_file = os.path.join(
-                    json_dir, f'{task}_shot_{nshot}_position_{pos}_step_{step}.json'
-                )
-                if not os.path.exists(json_file):
-                    print(
-                        f"Warning: {json_file} not found, skipping shot_{nshot}_position_{pos}_step_{step}"
-                    )
-                    continue
-
-                data = load_json_or_jsonl(json_file)
-                metadata = data.get('metadata', {})
-                all_samples = data.get('all_samples_result', {})
-                
-                # 从 change_bbox 中提取 area、token_span、step_span、token_change_total
-                change_bbox = all_samples.get('change_bbox', {})
-                area = change_bbox.get('area', {}).get('mean')
-                token_span = change_bbox.get('token_span', {}).get('mean')
-                step_span = change_bbox.get('step_span', {}).get('mean')
-                token_change_total = change_bbox.get('token_change_total', {}).get('mean')
-                
-                accuracy = metadata.get('accuracy')
-
-                if area is None or token_span is None or step_span is None or token_change_total is None or accuracy is None:
-                    print(
-                        f"Warning: Missing change_bbox metrics or accuracy in {json_file}, skipping."
-                    )
-                    continue
+    if task == 'mbpp':
+        # MBPP 任务：从 accuracy 子文件夹读取 accuracy，从其他目录读取 change_bbox
+        accuracy_dir = os.path.join(json_dir, 'accuracy')
+        if not os.path.exists(accuracy_dir):
+            print(f"Warning: accuracy directory not found: {accuracy_dir}")
+            return
+        
+        for nshot in shot_list:
+            for step in step_list:
+                for gen_length in gen_length_list:
+                    key = (nshot, step, gen_length)
+                    groups[key] = []
                     
-                entry = {
-                    'position': pos,
-                    'area': float(area),
-                    'token_span': float(token_span),
-                    'step_span': float(step_span),
-                    'token_change_total': float(token_change_total),
-                    'accuracy': float(accuracy),
-                    'shot': nshot,
-                    'step': step,
-                }
-                groups[key].append(entry)
-                all_entries.append(entry)
+                    # 查找最新的 accuracy JSON 文件（MBPP 使用不同的时间戳格式）
+                    pattern_prefix = f'step_{step}_gen_{gen_length}_nshot_{nshot}'
+                    json_file, timestamp = find_latest_timestamp_json_mbpp(accuracy_dir, pattern_prefix)
+                    
+                    if json_file is None:
+                        print(f"Warning: No accuracy file found for shot={nshot}, step={step}, gen_length={gen_length}")
+                        continue
+                    
+                    data = load_json_or_jsonl(json_file)
+                    accuracy_list = data.get('Accuracy', [])
+                    
+                    if len(accuracy_list) != nshot + 1:
+                        print(f"Warning: Accuracy list length ({len(accuracy_list)}) doesn't match nshot+1 ({nshot+1})")
+                        continue
+                    
+                    # 从其他 JSON 文件中获取 change_bbox 数据
+                    for pos in range(nshot + 1):
+                        nshot_dir = os.path.join(json_dir, f'nshot_{nshot}')
+                        position_dir = os.path.join(nshot_dir, f'position_{pos}')
+                        pattern_prefix_conf = f'step_{step}_gen_{gen_length}'
+                        conf_json_file, _ = find_latest_timestamp_json(position_dir, pattern_prefix_conf)
+                        
+                        change_bbox = None
+                        if conf_json_file and os.path.exists(conf_json_file):
+                            conf_data = load_json_or_jsonl(conf_json_file)
+                            all_samples = conf_data.get('all_samples_result', {})
+                            change_bbox = all_samples.get('change_bbox', {})
+                        
+                        accuracy = accuracy_list[pos] if pos < len(accuracy_list) else None
+                        
+                        if change_bbox is None or accuracy is None:
+                            print(f"Warning: Missing change_bbox or accuracy for position {pos}, skipping.")
+                            continue
+                        
+                        area = change_bbox.get('area', {}).get('mean')
+                        token_span = change_bbox.get('token_span', {}).get('mean')
+                        step_span = change_bbox.get('step_span', {}).get('mean')
+                        token_change_total = change_bbox.get('token_change_total', {}).get('mean')
+                        
+                        if area is None or token_span is None or step_span is None or token_change_total is None:
+                            print(f"Warning: Missing change_bbox metrics for position {pos}, skipping.")
+                            continue
+                        
+                        entry = {
+                            'position': pos,
+                            'area': float(area),
+                            'token_span': float(token_span),
+                            'step_span': float(step_span),
+                            'token_change_total': float(token_change_total),
+                            'accuracy': float(accuracy),
+                            'shot': nshot,
+                            'step': step,
+                            'gen_length': gen_length,
+                        }
+                        groups[key].append(entry)
+                        all_entries.append(entry)
+    else:
+        # 非 MBPP 任务：从 nshot_{nshot}/position_{position}/ 读取
+        for nshot in shot_list:
+            nshot_dir = os.path.join(json_dir, f'nshot_{nshot}')
+            if not os.path.exists(nshot_dir):
+                print(f"Warning: nshot_{nshot} directory not found, skipping.")
+                continue
+            
+            for step in step_list:
+                for gen_length in gen_length_list:
+                    key = (nshot, step, gen_length)
+                    groups[key] = []
+                    
+                    for pos in range(nshot + 1):
+                        position_dir = os.path.join(nshot_dir, f'position_{pos}')
+                        if not os.path.exists(position_dir):
+                            print(f"Warning: position_{pos} directory not found in nshot_{nshot}, skipping.")
+                            continue
+                        
+                        # 查找最新的时间戳 JSON 文件
+                        pattern_prefix = f'step_{step}_gen_{gen_length}'
+                        json_file, timestamp = find_latest_timestamp_json(position_dir, pattern_prefix)
+                        
+                        if json_file is None:
+                            print(f"Warning: No JSON file found for nshot={nshot}, position={pos}, step={step}, gen_length={gen_length}")
+                            continue
+                        
+                        data = load_json_or_jsonl(json_file)
+                        metadata = data.get('metadata', {})
+                        all_samples = data.get('all_samples_result', {})
+                        
+                        # 从 change_bbox 中提取 area、token_span、step_span、token_change_total
+                        change_bbox = all_samples.get('change_bbox', {})
+                        area = change_bbox.get('area', {}).get('mean')
+                        token_span = change_bbox.get('token_span', {}).get('mean')
+                        step_span = change_bbox.get('step_span', {}).get('mean')
+                        token_change_total = change_bbox.get('token_change_total', {}).get('mean')
+                        
+                        accuracy = metadata.get('accuracy')
+                        
+                        if area is None or token_span is None or step_span is None or token_change_total is None or accuracy is None:
+                            print(f"Warning: Missing change_bbox metrics or accuracy in {json_file}, skipping.")
+                            continue
+                        
+                        entry = {
+                            'position': pos,
+                            'area': float(area),
+                            'token_span': float(token_span),
+                            'step_span': float(step_span),
+                            'token_change_total': float(token_change_total),
+                            'accuracy': float(accuracy),
+                            'shot': nshot,
+                            'step': step,
+                            'gen_length': gen_length,
+                        }
+                        groups[key].append(entry)
+                        all_entries.append(entry)
 
-    # 为每个 (shot, step) 组合生成一张包含四个子图的图
+    # 为每个 (shot, step, gen_length) 组合生成一张包含四个子图的图
     metrics = ['area', 'token_span', 'step_span', 'token_change_total']
     metric_labels = {
         'area': 'Area (step_span × token_span)',
@@ -532,11 +1110,11 @@ def generate_tokenchange_accuracy_plot(
         'token_change_total': 'Token Change Total'
     }
     
-    for (nshot, step), entries in groups.items():
+    for (nshot, step, gen_length), entries in groups.items():
         if len(entries) == 0:
             continue
 
-        # 为每个 (shot, step) 组合生成一张包含四个子图的图
+        # 为每个 (shot, step, gen_length) 组合生成一张包含四个子图的图
         fig, axes = plt.subplots(1, 4, figsize=(24, 5))
         
         for idx, metric in enumerate(metrics):
@@ -564,19 +1142,26 @@ def generate_tokenchange_accuracy_plot(
             ax.grid(True, alpha=0.3)
         
         # 为整张图添加总标题
-        fig.suptitle(f'{task} | shot={nshot}, step={step}', fontsize=16, fontweight='bold', y=1.02)
+        fig.suptitle(f'{task} | shot={nshot}, step={step}, gen_length={gen_length}', fontsize=16, fontweight='bold', y=1.02)
         
         # 先调整布局，为 colorbar 留出空间
         plt.tight_layout(rect=[0, 0, 0.93, 0.98])
         
         # 为整张图添加统一的 colorbar
         cbar = fig.colorbar(scatter, ax=axes, label='Metric Value', pad=0.02)
-        output_path = os.path.join(output_dir, f'{task}_shot_{nshot}_step_{step}_tokenchange.png')
+        
+        # 输出路径：output_dir/task/shot_{nshot}/step_{step}_gen_{gen_length}/tokenchange_{timestamp}.png
+        task_output_dir = os.path.join(output_dir, task)
+        shot_dir = os.path.join(task_output_dir, f'shot_{nshot}')
+        step_gen_dir = os.path.join(shot_dir, f'step_{step}_gen_{gen_length}')
+        os.makedirs(step_gen_dir, exist_ok=True)
+        
+        output_path = os.path.join(step_gen_dir, f'tokenchange_{current_timestamp}.png')
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close(fig)
         print(f'已保存图像: {output_path}')
 
-    # 生成总图：所有 shot 和 step 的数据点，四张子图合并为一张
+    # 生成总图：所有 shot、step、gen_length 的数据点，四张子图合并为一张
     if len(all_entries) > 0:
         fig, axes = plt.subplots(1, 4, figsize=(24, 5))
         colors = [entry['shot'] for entry in all_entries]
@@ -609,7 +1194,13 @@ def generate_tokenchange_accuracy_plot(
         
         # 为整张图添加统一的 colorbar（使用最后一个 scatter，因为所有子图使用相同的颜色映射）
         cbar = fig.colorbar(scatter_list[-1], ax=axes, label='Shot Number', pad=0.02)
-        output_path = os.path.join(output_dir, f'{task}_all_shots_steps_tokenchange.png')
+        
+        # 输出路径：output_dir/task/all_shot/tokenchange_{timestamp}.png
+        task_output_dir = os.path.join(output_dir, task)
+        all_shot_dir = os.path.join(task_output_dir, 'all_shot')
+        os.makedirs(all_shot_dir, exist_ok=True)
+        
+        output_path = os.path.join(all_shot_dir, f'tokenchange_{current_timestamp}.png')
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close(fig)
         print(f'已保存图像: {output_path}')
@@ -624,17 +1215,21 @@ def main(args):
     paint_conf_acc=args.paint_conf_acc
     paint_conf=args.paint_conf
     paint_tokenchange_acc=args.paint_tokenchange_acc
+    paint_conf_currrentconf=args.paint_conf_currrentconf
+    #用这三种函数进行带入计算,看看差别是什么
+    num_gen_lengths=args.num_gen_lengths
     #这里一般采用默认配置环节
-    # num_shots=args.num_shots
-    # num_steps=args.num_steps
+    num_shots=args.num_shots
+    num_steps=args.num_steps
     #这里要进行相关的标记进行画图
     if paint_conf_acc:
-        generate_conf_accuracy_plot(json_dir, task, output_dir)
-    if paint_conf:
-        generate_conf_plots(json_dir, sample_index, task, output_dir)
+        generate_conf_accuracy_plot(json_dir, sample_index, task, output_dir,num_shots,num_steps,num_gen_lengths)
+    if paint_conf_currrentconf:
+        generate_accuracy_plot(json_dir, task, output_dir,num_shots,num_steps,num_gen_lengths)
     if paint_tokenchange_acc:
-        generate_tokenchange_accuracy_plot(json_dir, task, output_dir)
-
+        generate_tokenchange_accuracy_plot(json_dir, task, output_dir,num_shots,num_steps,num_gen_lengths)
+    if paint_conf:
+        generate_conf_plots(json_dir, sample_index, task, output_dir)      
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -645,6 +1240,10 @@ if __name__ == '__main__':
     parser.add_argument('--paint_conf_acc',action='store_true',default=False,help='是否绘制置信度-准确率图')
     parser.add_argument('--paint_conf',action='store_true',default=False,help='是否绘制置信度图')
     parser.add_argument('--paint_tokenchange_acc',action='store_true',default=False,help='是否绘制token change指标-准确率图')
+    parser.add_argument('--paint_conf_currrentconf',action='store_true',default=False,help='是否绘制当前置信度和置信度图')#放一起对比
+    parser.add_argument('--num_gen_lengths', type=int, nargs='+', default=None, help='生成长度')
+    parser.add_argument('--num_shots', type=int, nargs='+', default=None, help='shot数量')
+    parser.add_argument('--num_steps',type=int,nargs='+',default=None,help='步数')
     args = parser.parse_args()
     main(args)
     # generate_conf_plots(args.json_dir, args.sample_index, args.task, args.output_dir)

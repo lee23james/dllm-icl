@@ -259,11 +259,10 @@ def main(args):
     print('------------------ load model -----------------------')
     tokenizer=AutoTokenizer.from_pretrained(model_name,trust_remote_code=True)
     model=AutoModel.from_pretrained(model_name,trust_remote_code=True,torch_dtype=torch.bfloat16,local_files_only=True).to(device)
-
+    model.eval()
     print('--------------------start Answering----------------')
     #我只想画10张图,其他的我就进行累加即可
     #记录所有位置的答案
-
     for position in range(nshot+1):
         for mode in modes:
             print(f'------------------ start Answering with mode {mode} -----------------------')

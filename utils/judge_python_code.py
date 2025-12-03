@@ -28,26 +28,36 @@ def run_python_file(file_path):
     except Exception as e:
         return file_path,"Error",str(e)
 
+#专门针对nshot所有位置和autoicl进行测评
 #对文件进行评测
 #对于之前的eval.py运行文件进行扫描并且评测导入相对应的文件夹中(所以在sh脚本中这个是第二行,eval.py是第一行进行运行)
-def main():
-    parser= argparse.ArgumentParser(description='Run Python files in a folder and save results.')
-    parser.add_argument('--folder_path',type=str,help='Path to the folder containing Python files')
-    parser.add_argument('--output_path',type=str,help='Path to the TXT file to save results')
-    parser.add_argument('--return_json',action='store_true',default=False,help='If True, save results as JSON format with Accuracy and timestamp')
-    #需要对找到的文案进行一下归类
-    parser.add_argument('--nshot', type=int, default=3 )
-    parser.add_argument('--steps', type=int, default=128, help='Number of steps')
-    parser.add_argument('--gen_length', type=int, default=128, help='Generation length')
-    parser.add_argument('--find_not_position',action='store_true',default=False,help='If True, search in position_auto-icl folder; otherwise search all position folders')
-    args=parser.parse_args()
+def evaluate_python_files(folder_path, nshot, steps, gen_length, dev_samples_num=None,find_not_position=False, find_best_position=False,iswrite=True, return_json=False, output_path=None):
+    """
+    评估 Python 文件并返回结果
+    
+    Args:
+        folder_path: 包含 Python 文件的文件夹路径
+        nshot: shot 数量
+        steps: 步数
+        gen_length: 生成长度
+        find_not_position: 是否只查找 position_auto-icl 文件夹
+        iswrite: 是否写入文件（默认 True）
+        return_json: 是否返回 JSON 格式（默认 False）
+        output_path: 输出路径（可选）
+    
+    Returns:
+        如果 iswrite=False，返回 {'Accuracy': [accuracy_list]}
+        否则返回 None
+    """
 
     # 构建目标文件夹路径：shot_{nshot}_step_{steps}_gen_{gen_length}
-    target_folder_name = f"shot_{args.nshot}_step_{args.steps}_gen_{args.gen_length}"
-    target_folder = Path(args.folder_path) / target_folder_name
+    target_folder_name = f"shot_{nshot}_step_{steps}_gen_{gen_length}"
+    target_folder = Path(folder_path) / target_folder_name
     
     if not target_folder.exists():
         print(f"Target folder not found: {target_folder}")
+        if not iswrite:
+            return {'Accuracy': []}
         return
     
     print(f"Searching in folder: {target_folder}")
@@ -57,13 +67,16 @@ def main():
     position_results = {}  # {position: [list of (file_path, status, message)]}
     position_accuracies = []  # 存储每个 position 的准确率
     
+    if find_best_position:
+        #找不到 best_position
+        positions_to_check = [f'best_position_{dev_samples_num}']
     # 根据 find_not_position 参数决定查找哪些 position
-    if args.find_not_position:
+    elif find_not_position:
         # 如果指定了 find_not_position，只查找 position_auto-icl 文件夹
         positions_to_check = ['auto-icl']
     else:
         # 否则遍历所有 position (0 到 nshot)
-        positions_to_check = list(range(args.nshot + 1))
+        positions_to_check = list(range(nshot + 1))
     
     # 遍历需要检查的 position
     for position in positions_to_check:
@@ -149,24 +162,29 @@ def main():
         
         print(f"Position {position} accuracy: {accuracy:.2f}% ({success_count}/{len(py_files)})")
     
+    # 如果 iswrite=False，只返回 Accuracy 列表，不写入文件
+    if not iswrite:
+        accuracy_list = [acc['accuracy'] for acc in position_accuracies]
+        return {'Accuracy': accuracy_list}
+    
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     
     # 生成 JSON 文件（如果指定了 return_json）
-    if args.return_json:
-        if args.output_path:
+    if return_json:
+        if output_path:
             # 构建 JSON 文件名：step_{steps}_gen_{gen_length}_nshot_{nshot}_accuracy_{timestamp}.json
-            json_filename = f"step_{args.steps}_gen_{args.gen_length}_nshot_{args.nshot}_accuracy_{timestamp}.json"
-            json_output_path = Path(args.output_path) / json_filename
+            json_filename = f"step_{steps}_gen_{gen_length}_nshot_{nshot}_accuracy_{timestamp}.json"
+            json_output_path = Path(output_path) / json_filename
             json_output_path.parent.mkdir(parents=True, exist_ok=True)
         else:
             # 如果没有指定 output_path，保存到目标文件夹
-            json_output_path = target_folder / f"step_{args.steps}_gen_{args.gen_length}_nshot_{args.nshot}_accuracy_{timestamp}.json"
+            json_output_path = target_folder / f"step_{steps}_gen_{gen_length}_nshot_{nshot}_accuracy_{timestamp}.json"
         
         # 构建 JSON 数据
         json_data = {
-            'nshot': args.nshot,
-            'steps': args.steps,
-            'gen_length': args.gen_length,
+            'nshot': nshot,
+            'steps': steps,
+            'gen_length': gen_length,
             'timestamp': datetime.now().isoformat(),
             'Accuracy': [acc['accuracy'] for acc in position_accuracies],  # 每个 position 的准确率列表
             'position_details': position_accuracies,  # 详细信息
@@ -198,9 +216,9 @@ def main():
         with open(txt_output_path, 'w', encoding='utf-8') as f:
             f.write("=== Execution Results Summary ===\n")
             f.write(f"Position: {position}\n")
-            f.write(f"nshot: {args.nshot}\n")
-            f.write(f"steps: {args.steps}\n")
-            f.write(f"gen_length: {args.gen_length}\n")
+            f.write(f"nshot: {nshot}\n")
+            f.write(f"steps: {steps}\n")
+            f.write(f"gen_length: {gen_length}\n")
             f.write(f"timestamp: {datetime.now().isoformat()}\n\n")
             
             # 找到该 position 的准确率信息
@@ -225,6 +243,33 @@ def main():
     print("\nPosition-wise accuracy:")
     for acc in position_accuracies:
         print(f"  Position {acc['position']}: {acc['accuracy']:.2f}% ({acc['successful_files']}/{acc['total_files']})")
+    
+    return None
+
+#把main上的文件改成了可以通过一次运行实现
+def main():
+    parser= argparse.ArgumentParser(description='Run Python files in a folder and save results.')
+    parser.add_argument('--folder_path',type=str,help='Path to the folder containing Python files')
+    parser.add_argument('--output_path',type=str,help='Path to the TXT file to save results')
+    parser.add_argument('--return_json',action='store_true',default=False,help='If True, save results as JSON format with Accuracy and timestamp')
+    #需要对找到的文案进行一下归类
+    parser.add_argument('--nshot', type=int, default=3 )
+    parser.add_argument('--steps', type=int, default=128, help='Number of steps')
+    parser.add_argument('--gen_length', type=int, default=128, help='Generation length')
+    parser.add_argument('--find_not_position',action='store_true',default=False,help='If True, search in position_auto-icl folder; otherwise search all position folders')
+    parser.add_argument('--no-write',action='store_true',default=False,help='If set, do not write results to files, only return Accuracy list')
+    args=parser.parse_args()
+    
+    evaluate_python_files(
+        folder_path=args.folder_path,
+        nshot=args.nshot,
+        steps=args.steps,
+        gen_length=args.gen_length,
+        find_not_position=args.find_not_position,
+        iswrite=not args.no_write,  # 如果提供了 --no-write，则 iswrite=False
+        return_json=args.return_json,
+        output_path=args.output_path
+    )
 
 if __name__=="__main__":
     main()

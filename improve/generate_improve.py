@@ -258,7 +258,7 @@ def main(args):
     print('------------------ load model -----------------------')
     tokenizer=AutoTokenizer.from_pretrained(model_name,trust_remote_code=True)
     model=AutoModel.from_pretrained(model_name,trust_remote_code=True,torch_dtype=torch.bfloat16,local_files_only=True).to(device)
-
+    model.eval()
     print('--------------------start pre-processing----------------')
     answers=[]
     zero_answers=[]#对照组

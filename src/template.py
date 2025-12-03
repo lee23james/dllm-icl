@@ -85,14 +85,14 @@ assert find_Rotations("abc") == 3
 def find_Rotations(str):\n    tmp = str + str\n    n = len(str)\n    for i in range(1, n + 1):\n        substring = tmp[i:i + n]\n        if str == substring:\n            return i\n    return n
 [DONE]"""
 
-    shot8="""You are an expert Python programmer, and here is your task: Write a python function which takes a list of integers and only returns the odd ones. Your code should pass these tests:
+#     shot8="""You are an expert Python programmer, and here is your task: Write a function to find the minimum cost path to reach (m, n) from (0, 0) for the given cost matrix cost[][] and a position (m, n) in cost[][]. Your code should pass these tests:
 
-assert Split([1,2,3,4,5,6]) == [1,3,5]
-assert Split([10,11,12,13]) == [11,13]
-assert Split([7,8,9,1]) == [7,9,1]
-[BEGIN]
-def Split(list):\n    odli = []\n    for i in list:\n        if i % 2 != 0:\n            odli.append(i)\n    return od_li
-[DONE]"""
+# assert min_cost([[1, 2, 3], [4, 8, 2], [1, 5, 3]], 2, 2) == 8
+# assert min_cost([[2, 3, 4], [5, 9, 3], [2, 6, 4]], 2, 2) == 12
+# assert min_cost([[3, 4, 5], [6, 10, 4], [3, 7, 5]], 2, 2) == 16
+# [BEGIN]
+# R = 3\r\nC = 3\r\ndef min_cost(cost, m, n): \r\n\ttc = [[0 for x in range(C)] for x in range(R)] \r\n\ttc[0][0] = cost[0][0] \r\n\tfor i in range(1, m+1): \r\n\t\ttc[i][0] = tc[i-1][0] + cost[i][0] \r\n\tfor j in range(1, n+1): \r\n\t\ttc[0][j] = tc[0][j-1] + cost[0][j] \r\n\tfor i in range(1, m+1): \r\n\t\tfor j in range(1, n+1): \r\n\t\t\ttc[i][j] = min(tc[i-1][j-1], tc[i-1][j], tc[i][j-1]) + cost[i][j] \r\n\treturn tc[m][n]
+# [DONE]"""
 
 
 #因为我这里只列出了前3个难度,但是我的template有多个导致无法匹配到原来的测试里面,我可以只是提取3个来满足格式
@@ -104,7 +104,7 @@ def Split(list):\n    odli = []\n    for i in list:\n        if i % 2 != 0:\n   
 {test2}
 {test3}
 """
-    mbpp_list=[shot1,shot2,shot3,shot4,shot5,shot6,shot7,shot8]
+    mbpp_list=[shot1,shot2,shot3,shot4,shot5,shot6,shot7]
     total_shots = len(mbpp_list)
     # 安全解析 nshot
     try:
@@ -703,16 +703,16 @@ A:
     math_prompt_parts_sub=[None] * (len(math_prompt_parts) + 1)
 
     # 调试信息
-    print(f"[DEBUG math_500_prompt] nshot={nshot}, query_position={query_position}, mask_length={mask_length}")
-    print(f"[DEBUG math_500_prompt] len(prompt_parts)={len(prompt_parts)}, len(math_prompt_parts)={len(math_prompt_parts)}, len(math_prompt_parts_sub)={len(math_prompt_parts_sub)}")
-    print(f"[DEBUG math_500_prompt] question_insert_pos = nshot-query_position = {nshot}-{query_position} = {nshot-query_position}")
+    # print(f"[DEBUG math_500_prompt] nshot={nshot}, query_position={query_position}, mask_length={mask_length}")
+    # print(f"[DEBUG math_500_prompt] len(prompt_parts)={len(prompt_parts)}, len(math_prompt_parts)={len(math_prompt_parts)}, len(math_prompt_parts_sub)={len(math_prompt_parts_sub)}")
+    # print(f"[DEBUG math_500_prompt] question_insert_pos = nshot-query_position = {nshot}-{query_position} = {nshot-query_position}")
 
     index=0
     for idx,_ in enumerate(math_prompt_parts_sub):
         print(f"[DEBUG math_500_prompt] Loop: idx={idx}, index={index}, len(math_prompt_parts)={len(math_prompt_parts)}, question_insert_pos={nshot-query_position}")
         if idx != nshot-query_position:
             if index >= len(math_prompt_parts):
-                print(f"[DEBUG math_500_prompt] ERROR: index ({index}) >= len(math_prompt_parts) ({len(math_prompt_parts)})")
+                # print(f"[DEBUG math_500_prompt] ERROR: index ({index}) >= len(math_prompt_parts) ({len(math_prompt_parts)})")
                 raise IndexError(f"index {index} out of range for math_prompt_parts (length {len(math_prompt_parts)})")
             math_prompt_parts_sub[idx]=math_prompt_parts[index]
             index+=1
@@ -869,76 +869,98 @@ SUDOKU_shot4="""Puzzle:
 # 3421
 # </answer>"""
 
-# SUDOKU_shot5="""Puzzle: 
-# 0020
-# 0341
-# 0210
-# 1002
+SUDOKU_shot5="""Puzzle: 
+0204
+4020
+0430
+2000
+<answer>
+3214
+4123
+1432
+2341
+</answer>"""
+# SUDOKU_shot5="""Puzzle:
+# 0104
+# 3401
+# 4003
+# 1000
+# <answer>
+# 2134
+# 3421
+# 4213
+# 1342
+# </answer>"""
+
+# SUDOKU_shot6="""Puzzle: 
+# 4020
+# 2314
+# 0200
+# 1000
 # <answer>
 # 4123
-# 2341
-# 3214
+# 2314
+# 3241
 # 1432
 # </answer>"""
-SUDOKU_shot5="""Puzzle:
-0104
-3401
-4003
-1000
-<answer>
-2134
-3421
-4213
-1342
-</answer>"""
+
 
 SUDOKU_shot6="""Puzzle: 
-4020
-2314
+3410
 0200
-1000
+0020
+0143
 <answer>
-4123
-2314
-3241
-1432
+3412
+1234
+4321
+2143
 </answer>"""
-
 
 # SUDOKU_shot7="""Puzzle: 
-# 4123
 # 0000
-# 0402
-# 2300
+# 2413
+# 0231
+# 0100
 # <answer>
-# 4123
-# 3214
-# 1432
-# 2341
+# 1324
+# 2413
+# 4231
+# 3142
 # </answer>"""
-
 SUDOKU_shot7="""Puzzle: 
-0000
-2413
-0231
-0100
+0032
+0300
+0240
+3000
 <answer>
-1324
-2413
-4231
-3142
+4132
+2314
+1243
+3421
 </answer>"""
 
+# SUDOKU_shot8="""Puzzle: 
+# 2004
+# 0012
+# 0320
+# 1003
+# <answer>
+# 2134
+# 3412
+# 4321
+# 1243
+# </answer>"""
 SUDOKU_shot8="""Puzzle: 
-2004
-0012
-0320
-1003
+2000
+0023
+0200
+3001
 <answer>
-2134
-3412
-4321
-1243
+2314
+1423
+4231
+3142
 </answer>"""
 
 # SUDOKU_shot3="""Puzzle: 
@@ -1264,7 +1286,7 @@ target: '''
     for idx,_ in enumerate(gsm8k_list_sub_prompt):
         if idx != nshot-query_position:
             if index >= len(gsm8k_list_sub):
-                print(f"[DEBUG gsm8k_prompt] ERROR: index ({index}) >= len(gsm8k_list_sub) ({len(gsm8k_list_sub)})")
+                # print(f"[DEBUG gsm8k_prompt] ERROR: index ({index}) >= len(gsm8k_list_sub) ({len(gsm8k_list_sub)})")
                 raise IndexError(f"index {index} out of range for gsm8k_list_sub (length {len(gsm8k_list_sub)})")
             gsm8k_list_sub_prompt[idx] = gsm8k_list_sub[index]
             index+=1

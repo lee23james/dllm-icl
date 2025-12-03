@@ -91,7 +91,7 @@ def check_solution(prediction:str,ground_truth:str)->bool:
     return solution_part == ground_truth
 
 #评估sudoku的正确率
-def eval_sudoku(results,dataset,result_path,args,position):
+def eval_sudoku(results,dataset,result_path,args,position,iswrite=True):
     true_num = 0
     #results相当于是一个list,每一项都是模型回答预测的答案
     result_statuses = []
@@ -108,69 +108,71 @@ def eval_sudoku(results,dataset,result_path,args,position):
     accuracy = true_num/len(dataset)
     print(f"Final Accuracy:{accuracy:.4f}({true_num}/{len(dataset)})")
 
-    # 保持原有功能：写入原来的 result_path
-    # 如果 result_path 是目录，在该目录下创建 result.txt
-    result_path_obj = Path(result_path)
-    if result_path_obj.is_dir() or (not result_path_obj.exists() and not result_path_obj.suffix):
-        # 如果是目录或没有扩展名，在目录下创建 result.txt
-        result_file_path = result_path_obj / "result.txt"
-        result_path_obj.mkdir(parents=True, exist_ok=True)
-    else:
-        # 如果是文件路径，直接使用
-        result_file_path = result_path_obj
-        result_file_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    with open(result_file_path, 'a', encoding='utf-8') as file:
-        file.write("----------------Args Configguration-----------------\n")
-        for arg in vars(args):
-            file.write(f"{arg}: {getattr(args, arg)}\n")
-        file.write("\n")
-        file.write(f"Total Accuracy: {accuracy}\n")
-        file.write("\n\n")
-    
-    # 新增功能：创建新的目录结构并保存详细结果
-    # base_dir 是 result_path 的父目录（如果是文件）或 result_path 本身（如果是目录）
-    base_dir = result_file_path.parent if result_file_path.is_file() else result_file_path
-    
-    # 从 args 中读取实验配置
-    nshot = getattr(args, "nshot", None)
-    steps = getattr(args, "steps", None)
-    gen_length = getattr(args, "gen_length", None)
-    
-    # 构建多级目录：shot_step_gen / position
-    shot_part = f"shot_{nshot}_step_{steps}_gen_{gen_length}"
-    position_part = f"position_{position}"
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    
-    output_dir = base_dir / shot_part / position_part
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 创建时间戳命名的 txt 文件
-    txt_output_path = output_dir / f"{timestamp}.txt"
-    
-    with open(txt_output_path, 'w', encoding='utf-8') as f:
-        f.write("=== Execution Results Summary ===\n")
-        f.write(f"Position: {position}\n")
-        f.write(f"nshot: {nshot}\n")
-        f.write(f"steps: {steps}\n")
-        f.write(f"gen_length: {gen_length}\n")
-        f.write(f"timestamp: {datetime.now().isoformat()}\n\n")
+    # 只有当 iswrite=True 时才写入文件
+    if iswrite:
+        # 保持原有功能：写入原来的 result_path
+        # 如果 result_path 是目录，在该目录下创建 result.txt
+        result_path_obj = Path(result_path)
+        if result_path_obj.is_dir() or (not result_path_obj.exists() and not result_path_obj.suffix):
+            # 如果是目录或没有扩展名，在目录下创建 result.txt
+            result_file_path = result_path_obj / "result.txt"
+            result_path_obj.mkdir(parents=True, exist_ok=True)
+        else:
+            # 如果是文件路径，直接使用
+            result_file_path = result_path_obj
+            result_file_path.parent.mkdir(parents=True, exist_ok=True)
         
-        f.write("=== Args Configuration ===\n")
-        for arg in vars(args):
-            f.write(f"{arg}: {getattr(args, arg)}\n")
-        f.write("\n")
+        with open(result_file_path, 'a', encoding='utf-8') as file:
+            file.write("----------------Args Configguration-----------------\n")
+            for arg in vars(args):
+                file.write(f"{arg}: {getattr(args, arg)}\n")
+            file.write("\n")
+            file.write(f"Total Accuracy: {accuracy}\n")
+            file.write("\n\n")
         
-        f.write(f"Accuracy: {accuracy:.4f} ({true_num}/{len(dataset)})\n\n")
+        # 新增功能：创建新的目录结构并保存详细结果
+        # base_dir 是 result_path 的父目录（如果是文件）或 result_path 本身（如果是目录）
+        base_dir = result_file_path.parent if result_file_path.is_file() else result_file_path
         
-        f.write("=== Detailed Results ===\n")
-        for index, answer, is_correct in result_statuses:
-            f.write(f"=======idx:{index}=========\n")
-            f.write(f"Result: {answer}\n")
-            f.write(f"Status: {'true' if is_correct else 'false'}\n")
-            f.write("-" * 40 + "\n")
-    
-    print(f"Detailed results saved to: {txt_output_path}")
+        # 从 args 中读取实验配置
+        nshot = getattr(args, "nshot", None)
+        steps = getattr(args, "steps", None)
+        gen_length = getattr(args, "gen_length", None)
+        
+        # 构建多级目录：shot_step_gen / position
+        shot_part = f"shot_{nshot}_step_{steps}_gen_{gen_length}"
+        position_part = f"position_{position}"
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        output_dir = base_dir / shot_part / position_part
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 创建时间戳命名的 txt 文件
+        txt_output_path = output_dir / f"{timestamp}.txt"
+        
+        with open(txt_output_path, 'w', encoding='utf-8') as f:
+            f.write("=== Execution Results Summary ===\n")
+            f.write(f"Position: {position}\n")
+            f.write(f"nshot: {nshot}\n")
+            f.write(f"steps: {steps}\n")
+            f.write(f"gen_length: {gen_length}\n")
+            f.write(f"timestamp: {datetime.now().isoformat()}\n\n")
+            
+            f.write("=== Args Configuration ===\n")
+            for arg in vars(args):
+                f.write(f"{arg}: {getattr(args, arg)}\n")
+            f.write("\n")
+            
+            f.write(f"Accuracy: {accuracy:.4f} ({true_num}/{len(dataset)})\n\n")
+            
+            f.write("=== Detailed Results ===\n")
+            for index, answer, is_correct in result_statuses:
+                f.write(f"=======idx:{index}=========\n")
+                f.write(f"Result: {answer}\n")
+                f.write(f"Status: {'true' if is_correct else 'false'}\n")
+                f.write("-" * 40 + "\n")
+        
+        print(f"Detailed results saved to: {txt_output_path}")
     
     #这里返回准确率,方便后续画点
     return accuracy
@@ -183,7 +185,7 @@ def countdown_check(model_answer,ground_truth):
         return False
 
 #评估countdown数据集并计算正确率
-def eval_countdown(results, dataset, result_path, args, position):
+def eval_countdown(results, dataset, result_path, args, position, iswrite=True):
     true_num = 0
     # 存储每个结果的检查状态
     result_statuses = []
@@ -198,69 +200,71 @@ def eval_countdown(results, dataset, result_path, args, position):
     accuracy = true_num/len(dataset)
     print(f"Final Accuracy:{accuracy:.4f}({true_num}/{len(dataset)})")
 
-    # 保持原有功能：写入原来的 result_path
-    # 如果 result_path 是目录，在该目录下创建 result.txt
-    result_path_obj = Path(result_path)
-    if result_path_obj.is_dir() or (not result_path_obj.exists() and not result_path_obj.suffix):
-        # 如果是目录或没有扩展名，在目录下创建 result.txt
-        result_file_path = result_path_obj / "result.txt"
-        result_path_obj.mkdir(parents=True, exist_ok=True)
-    else:
-        # 如果是文件路径，直接使用
-        result_file_path = result_path_obj
-        result_file_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    with open(result_file_path, 'a', encoding='utf-8') as file:
-        file.write("----------------- Args Configuration -------------------\n")
-        for arg in vars(args):
-            file.write(f"{arg}: {getattr(args, arg)}\n")
-        file.write("\n\n")
-        file.write(f"Total Accuracy: {true_num / len(dataset)}\n")
-        file.write("\n\n")
-    
-    # 新增功能：创建新的目录结构并保存详细结果
-    # base_dir 是 result_path 的父目录（如果是文件）或 result_path 本身（如果是目录）
-    base_dir = result_file_path.parent if result_file_path.is_file() else result_file_path
-    
-    # 从 args 中读取实验配置
-    nshot = getattr(args, "nshot", None)
-    steps = getattr(args, "steps", None)
-    gen_length = getattr(args, "gen_length", None)
-    
-    # 构建多级目录：shot_step_gen / position
-    shot_part = f"shot_{nshot}_step_{steps}_gen_{gen_length}"
-    position_part = f"position_{position}"
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    
-    output_dir = base_dir / shot_part / position_part
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 创建时间戳命名的 txt 文件
-    txt_output_path = output_dir / f"{timestamp}.txt"
-    
-    with open(txt_output_path, 'w', encoding='utf-8') as f:
-        f.write("=== Execution Results Summary ===\n")
-        f.write(f"Position: {position}\n")
-        f.write(f"nshot: {nshot}\n")
-        f.write(f"steps: {steps}\n")
-        f.write(f"gen_length: {gen_length}\n")
-        f.write(f"timestamp: {datetime.now().isoformat()}\n\n")
+    # 只有当 iswrite=True 时才写入文件
+    if iswrite:
+        # 保持原有功能：写入原来的 result_path
+        # 如果 result_path 是目录，在该目录下创建 result.txt
+        result_path_obj = Path(result_path)
+        if result_path_obj.is_dir() or (not result_path_obj.exists() and not result_path_obj.suffix):
+            # 如果是目录或没有扩展名，在目录下创建 result.txt
+            result_file_path = result_path_obj / "result.txt"
+            result_path_obj.mkdir(parents=True, exist_ok=True)
+        else:
+            # 如果是文件路径，直接使用
+            result_file_path = result_path_obj
+            result_file_path.parent.mkdir(parents=True, exist_ok=True)
         
-        f.write("=== Args Configuration ===\n")
-        for arg in vars(args):
-            f.write(f"{arg}: {getattr(args, arg)}\n")
-        f.write("\n")
+        with open(result_file_path, 'a', encoding='utf-8') as file:
+            file.write("----------------- Args Configuration -------------------\n")
+            for arg in vars(args):
+                file.write(f"{arg}: {getattr(args, arg)}\n")
+            file.write("\n\n")
+            file.write(f"Total Accuracy: {true_num / len(dataset)}\n")
+            file.write("\n\n")
         
-        f.write(f"Accuracy: {accuracy:.4f} ({true_num}/{len(dataset)})\n\n")
+        # 新增功能：创建新的目录结构并保存详细结果
+        # base_dir 是 result_path 的父目录（如果是文件）或 result_path 本身（如果是目录）
+        base_dir = result_file_path.parent if result_file_path.is_file() else result_file_path
         
-        f.write("=== Detailed Results ===\n")
-        for index, answer, is_correct in result_statuses:
-            f.write(f"=======idx:{index}=========\n")
-            f.write(f"Result: {answer}\n")
-            f.write(f"Status: {'true' if is_correct else 'false'}\n")
-            f.write("-" * 40 + "\n")
-    
-    print(f"Detailed results saved to: {txt_output_path}")
+        # 从 args 中读取实验配置
+        nshot = getattr(args, "nshot", None)
+        steps = getattr(args, "steps", None)
+        gen_length = getattr(args, "gen_length", None)
+        
+        # 构建多级目录：shot_step_gen / position
+        shot_part = f"shot_{nshot}_step_{steps}_gen_{gen_length}"
+        position_part = f"position_{position}"
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        output_dir = base_dir / shot_part / position_part
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 创建时间戳命名的 txt 文件
+        txt_output_path = output_dir / f"{timestamp}.txt"
+        
+        with open(txt_output_path, 'w', encoding='utf-8') as f:
+            f.write("=== Execution Results Summary ===\n")
+            f.write(f"Position: {position}\n")
+            f.write(f"nshot: {nshot}\n")
+            f.write(f"steps: {steps}\n")
+            f.write(f"gen_length: {gen_length}\n")
+            f.write(f"timestamp: {datetime.now().isoformat()}\n\n")
+            
+            f.write("=== Args Configuration ===\n")
+            for arg in vars(args):
+                f.write(f"{arg}: {getattr(args, arg)}\n")
+            f.write("\n")
+            
+            f.write(f"Accuracy: {accuracy:.4f} ({true_num}/{len(dataset)})\n\n")
+            
+            f.write("=== Detailed Results ===\n")
+            for index, answer, is_correct in result_statuses:
+                f.write(f"=======idx:{index}=========\n")
+                f.write(f"Result: {answer}\n")
+                f.write(f"Status: {'true' if is_correct else 'false'}\n")
+                f.write("-" * 40 + "\n")
+        
+        print(f"Detailed results saved to: {txt_output_path}")
     
     #这里返回准确率,方便后续画点
     return accuracy
@@ -307,7 +311,7 @@ def collect_answer_from_response(response):
     return _res.strip('.').strip()
 
 #一般都是用in进行匹配
-def eval_math500(results,dataset,result_path,args,position):
+def eval_math500(results,dataset,result_path,args,position,iswrite=True):
     true_num=0
     result_statuses = []
     for index,answer in enumerate(results):
@@ -321,69 +325,71 @@ def eval_math500(results,dataset,result_path,args,position):
     accuracy = true_num/len(dataset)
     print(f"Final Accuracy:{accuracy:.4f}({true_num}/{len(dataset)})")
 
-    # 保持原有功能：写入原来的 result_path
-    # 如果 result_path 是目录，在该目录下创建 result.txt
-    result_path_obj = Path(result_path)
-    if result_path_obj.is_dir() or (not result_path_obj.exists() and not result_path_obj.suffix):
-        # 如果是目录或没有扩展名，在目录下创建 result.txt
-        result_file_path = result_path_obj / "result.txt"
-        result_path_obj.mkdir(parents=True, exist_ok=True)
-    else:
-        # 如果是文件路径，直接使用
-        result_file_path = result_path_obj
-        result_file_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    with open(result_file_path, 'a', encoding='utf-8') as file:
-        file.write("-------------------Args Configuration---------------------\n")
-        for arg in vars(args):
-            file.write(f"{arg}:{getattr(args,arg)}\n")
-        file.write("\n\n")
-        file.write(f"Total Accuracy:{accuracy}\n")
-        file.write("\n\n")
-    
-    # 新增功能：创建新的目录结构并保存详细结果
-    # base_dir 是 result_path 的父目录（如果是文件）或 result_path 本身（如果是目录）
-    base_dir = result_file_path.parent if result_file_path.is_file() else result_file_path
-    
-    # 从 args 中读取实验配置
-    nshot = getattr(args, "nshot", None)
-    steps = getattr(args, "steps", None)
-    gen_length = getattr(args, "gen_length", None)
-    
-    # 构建多级目录：shot_step_gen / position
-    shot_part = f"shot_{nshot}_step_{steps}_gen_{gen_length}"
-    position_part = f"position_{position}"
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    
-    output_dir = base_dir / shot_part / position_part
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 创建时间戳命名的 txt 文件
-    txt_output_path = output_dir / f"{timestamp}.txt"
-    
-    with open(txt_output_path, 'w', encoding='utf-8') as f:
-        f.write("=== Execution Results Summary ===\n")
-        f.write(f"Position: {position}\n")
-        f.write(f"nshot: {nshot}\n")
-        f.write(f"steps: {steps}\n")
-        f.write(f"gen_length: {gen_length}\n")
-        f.write(f"timestamp: {datetime.now().isoformat()}\n\n")
+    # 只有当 iswrite=True 时才写入文件
+    if iswrite:
+        # 保持原有功能：写入原来的 result_path
+        # 如果 result_path 是目录，在该目录下创建 result.txt
+        result_path_obj = Path(result_path)
+        if result_path_obj.is_dir() or (not result_path_obj.exists() and not result_path_obj.suffix):
+            # 如果是目录或没有扩展名，在目录下创建 result.txt
+            result_file_path = result_path_obj / "result.txt"
+            result_path_obj.mkdir(parents=True, exist_ok=True)
+        else:
+            # 如果是文件路径，直接使用
+            result_file_path = result_path_obj
+            result_file_path.parent.mkdir(parents=True, exist_ok=True)
         
-        f.write("=== Args Configuration ===\n")
-        for arg in vars(args):
-            f.write(f"{arg}: {getattr(args, arg)}\n")
-        f.write("\n")
+        with open(result_file_path, 'a', encoding='utf-8') as file:
+            file.write("-------------------Args Configuration---------------------\n")
+            for arg in vars(args):
+                file.write(f"{arg}:{getattr(args,arg)}\n")
+            file.write("\n\n")
+            file.write(f"Total Accuracy:{accuracy}\n")
+            file.write("\n\n")
         
-        f.write(f"Accuracy: {accuracy:.4f} ({true_num}/{len(dataset)})\n\n")
+        # 新增功能：创建新的目录结构并保存详细结果
+        # base_dir 是 result_path 的父目录（如果是文件）或 result_path 本身（如果是目录）
+        base_dir = result_file_path.parent if result_file_path.is_file() else result_file_path
         
-        f.write("=== Detailed Results ===\n")
-        for index, answer, is_correct in result_statuses:
-            f.write(f"=======idx:{index}=========\n")
-            f.write(f"Result: {answer}\n")
-            f.write(f"Status: {'true' if is_correct else 'false'}\n")
-            f.write("-" * 40 + "\n")
-    
-    print(f"Detailed results saved to: {txt_output_path}")
+        # 从 args 中读取实验配置
+        nshot = getattr(args, "nshot", None)
+        steps = getattr(args, "steps", None)
+        gen_length = getattr(args, "gen_length", None)
+        
+        # 构建多级目录：shot_step_gen / position
+        shot_part = f"shot_{nshot}_step_{steps}_gen_{gen_length}"
+        position_part = f"position_{position}"
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        output_dir = base_dir / shot_part / position_part
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 创建时间戳命名的 txt 文件
+        txt_output_path = output_dir / f"{timestamp}.txt"
+        
+        with open(txt_output_path, 'w', encoding='utf-8') as f:
+            f.write("=== Execution Results Summary ===\n")
+            f.write(f"Position: {position}\n")
+            f.write(f"nshot: {nshot}\n")
+            f.write(f"steps: {steps}\n")
+            f.write(f"gen_length: {gen_length}\n")
+            f.write(f"timestamp: {datetime.now().isoformat()}\n\n")
+            
+            f.write("=== Args Configuration ===\n")
+            for arg in vars(args):
+                f.write(f"{arg}: {getattr(args, arg)}\n")
+            f.write("\n")
+            
+            f.write(f"Accuracy: {accuracy:.4f} ({true_num}/{len(dataset)})\n\n")
+            
+            f.write("=== Detailed Results ===\n")
+            for index, answer, is_correct in result_statuses:
+                f.write(f"=======idx:{index}=========\n")
+                f.write(f"Result: {answer}\n")
+                f.write(f"Status: {'true' if is_correct else 'false'}\n")
+                f.write("-" * 40 + "\n")
+        
+        print(f"Detailed results saved to: {txt_output_path}")
     
     #这里返回准确率,方便后续画点
     return accuracy
@@ -392,6 +398,7 @@ def eval_math500(results,dataset,result_path,args,position):
 #开始评估mbpp
 #这个是针对mbpp-full的,现在我需要扩展到sanitized子集
 #我现在要稍微改进一下,我需要取前3个进行测试,来完成代码评估
+#有可能会在bestposition下求出最好的位置
 def generate_mbpp_test_files(
     samples:List[Dict],
     model_outputs:List[str],
@@ -469,7 +476,7 @@ Problem description: {text}
         output_paths.append(output_path)
     return output_paths
 
-#这个主要是生成后续代码评估模型需要的问题、还有模型回答的文件
+#这个主要是生成后续代码评估模型需要的问题、还有模型回答的文件,position是一个参数,可以记录str还是int
 #创建所需文件夹
 def eval_mbpp(results, dataset, result_dir, args,position):
     """
@@ -488,7 +495,11 @@ def eval_mbpp(results, dataset, result_dir, args,position):
     steps = getattr(args, "steps", None)
     gen_length = getattr(args, "gen_length", None)
     if position is not None:
+        #对于query_position的判断,如果是字符就选择auto
+        # if isinstance(position,int):
         query_position = position
+        # else:
+        #     query_position = "best_position"#有一个最好的位置
     else:
         query_position = "auto-icl"
     # 构建多级目录：shot_step_gen / position / timestamp
@@ -539,7 +550,7 @@ def gsm8k_check(model_answer:str,ground_truth:str)->bool:
 
 #自己配的评估gsm8k的代码,主要还是测试的是准确率,因为改变的是位置,无法运用到任何一个评估框架得自己写
 #首先得先理解results列表里面主要是什么
-def eval_gsm8k(results,dataset,result_path,args,position):
+def eval_gsm8k(results,dataset,result_path,args,position,iswrite=True):
     true_num=0
     # 存储每个结果的检查状态
     result_statuses = []
@@ -556,69 +567,71 @@ def eval_gsm8k(results,dataset,result_path,args,position):
     accuracy=true_num/len(dataset)
     print(f"Final Accuracy:{accuracy:.4f}({true_num}/{len(dataset)})")
 
+    # 只有当 iswrite=True 时才写入文件
+    if iswrite:
     # 保持原有功能：写入原来的 result_path
     # 如果 result_path 是目录，在该目录下创建 result.txt
-    result_path_obj = Path(result_path)
-    if result_path_obj.is_dir() or (not result_path_obj.exists() and not result_path_obj.suffix):
-        # 如果是目录或没有扩展名，在目录下创建 result.txt
-        result_file_path = result_path_obj / "result.txt"
-        result_path_obj.mkdir(parents=True, exist_ok=True)
-    else:
-        # 如果是文件路径，直接使用
-        result_file_path = result_path_obj
-        result_file_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    with open(result_file_path, 'a', encoding='utf-8') as file:
-        file.write("-------------------Args Configuration---------------------\n")
-        for arg in vars(args):
-            file.write(f"{arg}:{getattr(args,arg)}\n")
-        file.write("\n")
-        file.write(f"Total Accuracy:{accuracy}\n")
-        file.write("\n\n")
-    
-    # 新增功能：创建新的目录结构并保存详细结果
-    # base_dir 是 result_path 的父目录（如果是文件）或 result_path 本身（如果是目录）
-    base_dir = result_file_path.parent if result_file_path.is_file() else result_file_path
-    
-    # 从 args 中读取实验配置
-    nshot = getattr(args, "nshot", None)
-    steps = getattr(args, "steps", None)
-    gen_length = getattr(args, "gen_length", None)
-    
-    # 构建多级目录：shot_step_gen / position
-    shot_part = f"shot_{nshot}_step_{steps}_gen_{gen_length}"
-    position_part = f"position_{position}"
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    
-    output_dir = base_dir / shot_part / position_part
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 创建时间戳命名的 txt 文件
-    txt_output_path = output_dir / f"{timestamp}.txt"
-    
-    with open(txt_output_path, 'w', encoding='utf-8') as f:
-        f.write("=== Execution Results Summary ===\n")
-        f.write(f"Position: {position}\n")
-        f.write(f"nshot: {nshot}\n")
-        f.write(f"steps: {steps}\n")
-        f.write(f"gen_length: {gen_length}\n")
-        f.write(f"timestamp: {datetime.now().isoformat()}\n\n")
+        result_path_obj = Path(result_path)
+        if result_path_obj.is_dir() or (not result_path_obj.exists() and not result_path_obj.suffix):
+            # 如果是目录或没有扩展名，在目录下创建 result.txt
+            result_file_path = result_path_obj / "result.txt"
+            result_path_obj.mkdir(parents=True, exist_ok=True)
+        else:
+            # 如果是文件路径，直接使用
+            result_file_path = result_path_obj
+            result_file_path.parent.mkdir(parents=True, exist_ok=True)
         
-        f.write("=== Args Configuration ===\n")
-        for arg in vars(args):
-            f.write(f"{arg}: {getattr(args, arg)}\n")
-        f.write("\n")
+        with open(result_file_path, 'a', encoding='utf-8') as file:
+            file.write("-------------------Args Configuration---------------------\n")
+            for arg in vars(args):
+                file.write(f"{arg}:{getattr(args,arg)}\n")
+            file.write("\n")
+            file.write(f"Total Accuracy:{accuracy}\n")
+            file.write("\n\n")
         
-        f.write(f"Accuracy: {accuracy:.4f} ({true_num}/{len(dataset)})\n\n")
+        # 新增功能：创建新的目录结构并保存详细结果
+        # base_dir 是 result_path 的父目录（如果是文件）或 result_path 本身（如果是目录）
+        base_dir = result_file_path.parent if result_file_path.is_file() else result_file_path
         
-        f.write("=== Detailed Results ===\n")
-        for index, answer, is_correct in result_statuses:
-            f.write(f"=======idx:{index}=========\n")
-            f.write(f"Result: {answer}\n")
-            f.write(f"Status: {'true' if is_correct else 'false'}\n")
-            f.write("-" * 40 + "\n")
-    
-    print(f"Detailed results saved to: {txt_output_path}")
+        # 从 args 中读取实验配置
+        nshot = getattr(args, "nshot", None)
+        steps = getattr(args, "steps", None)
+        gen_length = getattr(args, "gen_length", None)
+        
+        # 构建多级目录：shot_step_gen / position
+        shot_part = f"shot_{nshot}_step_{steps}_gen_{gen_length}"
+        position_part = f"position_{position}"
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        output_dir = base_dir / shot_part / position_part
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 创建时间戳命名的 txt 文件
+        txt_output_path = output_dir / f"{timestamp}.txt"
+        
+        with open(txt_output_path, 'w', encoding='utf-8') as f:
+            f.write("=== Execution Results Summary ===\n")
+            f.write(f"Position: {position}\n")
+            f.write(f"nshot: {nshot}\n")
+            f.write(f"steps: {steps}\n")
+            f.write(f"gen_length: {gen_length}\n")
+            f.write(f"timestamp: {datetime.now().isoformat()}\n\n")
+            
+            f.write("=== Args Configuration ===\n")
+            for arg in vars(args):
+                f.write(f"{arg}: {getattr(args, arg)}\n")
+            f.write("\n")
+            
+            f.write(f"Accuracy: {accuracy:.4f} ({true_num}/{len(dataset)})\n\n")
+            
+            f.write("=== Detailed Results ===\n")
+            for index, answer, is_correct in result_statuses:
+                f.write(f"=======idx:{index}=========\n")
+                f.write(f"Result: {answer}\n")
+                f.write(f"Status: {'true' if is_correct else 'false'}\n")
+                f.write("-" * 40 + "\n")
+        
+        print(f"Detailed results saved to: {txt_output_path}")
     
     #这里返回准确率,方便后续画点
     return accuracy
@@ -841,7 +854,7 @@ def eval(
     result_path,
     args,
     correct_letters=None,
-    position=None
+    position:int|str=None
     ):
     if task=='sudoku':
         return eval_sudoku(results,dataset,result_path,args,position)

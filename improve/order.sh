@@ -1,0 +1,3 @@
+python improve/seclect_order.py --task sudoku --model_name /home/share/model_weight/llada/LLaDA-8B-Base --device cuda:0 --nshot 4 --steps 32 --gen_length 32 --block_length 32 --temperature 0.0 --data_path ./data/sudoku.csv --dev_data_path ./data/sudoku_dev.csv  --dev_samples_num 2
+
+python improve/seclect_order.py --task mbpp --model_name /home/share/model_weight/llada/LLaDA-8B-Base --device cuda:3 --nshot 4 --steps 128 --gen_length 128 --block_length 128 --temperature 0.0 --data_path ./data/mbpp_test.json --dev_data_path ./data/mbpp_dev.json  --dev_samples_num 1
