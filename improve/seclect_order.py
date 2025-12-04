@@ -31,14 +31,16 @@ from utils.judge_python_code import evaluate_python_files
 #sample_num是一个关键.,可以从这里去探索用多少个去获得支持集的答案,准确率最高,这里额外需要支持集地址,方便筛选,默认thread是None
 #dev_samples_num是一个重要参数,用来限制dev_dataset的样本数量,方便进行计算
 def seclect_order(tokenizer,model_name,args,model,task,dev_samples_num,dev_data_path,nshot,steps,gen_length,block_length,temperature,mode,situation,thread=None,accelerator=None):
-    dev_dataset=load_dataset(dev_data_path,task,dev_samples_num)
+    # 先加载完整的数据集（用于评估时）
+    full_dev_dataset = load_dataset(dev_data_path, task, dev_samples_num)
     
-    # 如果使用 Accelerate，分割数据集
+    # 如果使用 Accelerate，分割数据集用于并行处理
     if accelerator is not None:
-            with accelerator.split_between_processes(dev_dataset) as subset_dataset:
-                dev_dataset = subset_dataset
-                print(f'[Rank {accelerator.process_index}] Load dev dataset: {len(dev_dataset)} samples')
+        with accelerator.split_between_processes(full_dev_dataset) as subset_dataset:
+            dev_dataset = subset_dataset
+            print(f'[Rank {accelerator.process_index}] Load dev dataset: {len(dev_dataset)} samples (total: {len(full_dev_dataset)})')
     else:
+        dev_dataset = full_dev_dataset
         print('------------------Load dev dataset------------------')
     # tokenizer=AutoTokenizer.from_pretrained(model_name,trust_remote_code=True,local_files_only=True,local_files_only=True)
     # if 'LLaDA' in model_name:
@@ -82,69 +84,89 @@ def seclect_order(tokenizer,model_name,args,model,task,dev_samples_num,dev_data_
         
         # 如果使用 Accelerate，收集所有进程的结果
         if accelerator is not None and accelerator.num_processes > 1:
-            # 使用 gather_object 收集所有进程的结果
-            # gather_object 需要传入一个列表，它会填充这个列表
-            all_results_list = [None] * accelerator.num_processes
-            accelerator.gather_object(results, all_results_list)
-            
-            # 在主进程中合并结果
-            if accelerator.is_main_process:
-                # all_results_list 是一个包含所有进程结果的列表
-                # 展平所有结果，按进程顺序合并
-                merged_results = []
-                for proc_results in all_results_list:
-                    if proc_results is not None:
-                        merged_results.extend(proc_results)
-                results = merged_results
+            # 使用 PyTorch 的分布式通信收集所有进程的结果
+            import torch.distributed as dist
+            if dist.is_initialized():
+                # 使用 all_gather_object 收集所有进程的结果
+                all_results_list = [None] * accelerator.num_processes
+                dist.all_gather_object(all_results_list, results)
+                
+                # 在主进程中合并结果
+                if accelerator.is_main_process:
+                    # all_results_list 是一个包含所有进程结果的列表
+                    # 展平所有结果，按进程顺序合并
+                    merged_results = []
+                    for proc_results in all_results_list:
+                        if proc_results is not None:
+                            merged_results.extend(proc_results)
+                    results = merged_results
+                else:
+                    # 非主进程跳过评估，继续下一个 query_position
+                    continue
             else:
-                # 非主进程跳过评估，继续下一个 query_position
-                continue
+                # 如果分布式未初始化，直接使用当前结果
+                pass
         #注意这里一定要记录一下 ,这里返回准确率,对于每一个位置,都要去测试所有的准确度,mbpp也只是会生成对应的文件,我需要在结束的时候运行评估代码来记录正确与否
         #通过args记录要去评测的是什么,对于mbpp,acc没用,每个position都会生成最新的评估函数,所以只需要在之后进行计算即可
+        # 只在主进程执行评估（因为只有主进程有完整的结果）
         if task == 'mbpp':
-            # 对于 mbpp，调用 eval_mbpp 生成 Python 文件
-            from utils.eval_utils import eval_mbpp
-            # 使用 result_path 如果存在，否则使用默认的 results 目录
-            result_path = getattr(args, 'result_path', None)
-            if result_path is None:
-                # 如果没有指定 result_path，使用默认的 results/{task}_results 目录
-                result_path = f'./results/{task}_results'
-            eval_mbpp(results, dev_dataset, result_path, args, position=query_position)
+            if accelerator is None or accelerator.is_main_process:
+                # 对于 mbpp，调用 eval_mbpp 生成 Python 文件
+                from utils.eval_utils import eval_mbpp
+                # 使用 result_path 如果存在，否则使用默认的 results 目录
+                result_path = getattr(args, 'result_path', None)
+                if result_path is None:
+                    # 如果没有指定 result_path，使用默认的 results/{task}_results 目录
+                    result_path = f'./results/{task}_results'
+                # 使用完整的数据集进行评估（results 已经包含了所有进程的结果）
+                eval_mbpp(results, full_dev_dataset, result_path, args, position=query_position)
         else:
-            # 使用 result_path 如果存在，否则使用默认的 results 目录
-            result_path = getattr(args, 'result_path', None)
-            if result_path is None:
-                # 如果没有指定 result_path，使用默认的 results/{task}_results 目录
-                result_path = f'./results/{task}_results'
-            acc = eval(task, results, dev_dataset, result_path, args, position=query_position)
-            acc_list.append(acc)
+            # 只在主进程执行评估（因为只有主进程有完整的结果）
+            if accelerator is None or accelerator.is_main_process:
+                # 使用 result_path 如果存在，否则使用默认的 results 目录
+                result_path = getattr(args, 'result_path', None)
+                if result_path is None:
+                    # 如果没有指定 result_path，使用默认的 results/{task}_results 目录
+                    result_path = f'./results/{task}_results'
+                # 使用完整的数据集进行评估（results 已经包含了所有进程的结果）
+                acc = eval(task, results, full_dev_dataset, result_path, args, position=query_position)
+                acc_list.append(acc)
     
     # 如果是 mbpp 任务，在所有文件生成后统一评估
+    # 只在主进程执行评估（因为只有主进程有完整的结果）
     if task == 'mbpp':
-        # 获取 result_path，用于查找生成的 Python 文件
-        result_path = getattr(args, 'result_path', None)
-        if result_path is None:
-            # 如果没有指定 result_path，使用默认的 results/{task}_results 目录
-            result_path = f'./results/{task}_results'
-        # 调用 judge_python_code 进行评估，iswrite=False 只返回 Accuracy 列表
-        judge_result = evaluate_python_files(
-            folder_path=result_path,
-            nshot=nshot,
-            steps=steps,
-            gen_length=gen_length,
-            find_not_position=False,
-            iswrite=False,#不让写入文件,只返回Accuracy列表
-            return_json=False,#不返回json
-            output_path=None,
-            # find_best_position=True
-        )
-        if judge_result and 'Accuracy' in judge_result:
-            acc_list = judge_result['Accuracy']
-            print(f"MBPP Accuracy list: {acc_list}")
+        # 如果使用 Accelerate，只在主进程执行评估
+        if accelerator is None or accelerator.is_main_process:
+            # 获取 result_path，用于查找生成的 Python 文件
+            result_path = getattr(args, 'result_path', None)
+            if result_path is None:
+                # 如果没有指定 result_path，使用默认的 results/{task}_results 目录
+                result_path = f'./results/{task}_results'
+            # 调用 judge_python_code 进行评估，iswrite=False 只返回 Accuracy 列表
+            judge_result = evaluate_python_files(
+                folder_path=result_path,
+                nshot=nshot,
+                steps=steps,
+                gen_length=gen_length,
+                find_not_position=False,
+                iswrite=False,#不让写入文件,只返回Accuracy列表
+                return_json=False,#不返回json
+                output_path=None,
+                # find_best_position=True
+            )
+            if judge_result and 'Accuracy' in judge_result:
+                acc_list = judge_result['Accuracy']
+                print(f"MBPP Accuracy list: {acc_list}")
+            else:
+                print("Warning: Failed to get MBPP accuracy from judge_python_code")
         else:
-            print("Warning: Failed to get MBPP accuracy from judge_python_code")
+            # 非主进程，acc_list 保持为空，稍后会返回 None
+            acc_list = []
+    
     #通过这样获得计算acc的方法,然后开始进行计算
-    print('-------------------Finish----------------')
+    # 只在主进程打印完成信息
+    if accelerator is None or accelerator.is_main_process:
+        print('-------------------Finish----------------')
 
     #现在的acc_list是每一个位置的准确率按照0到nshot的顺序进行排列的,我要用这个顺序进行选择来运行了
     # 找出准确率最高的 position
@@ -208,72 +230,95 @@ def main(args):
                 accelerator = None
     
     tokenizer=AutoTokenizer.from_pretrained(model_name,trust_remote_code=True,local_files_only=True)
-    if 'LLaDA' in model_name:
-        model = AutoModel.from_pretrained(model_name,trust_remote_code=True,torch_dtype=torch.bfloat16,local_files_only=True)
-    else:
-        model=AutoModelForCausalLM.from_pretrained(model_name,trust_remote_code=True,torch_dtype=torch.bfloat16,local_files_only=True)
     
-    # 如果使用 Accelerate，让 Accelerator 管理设备分配
-    if  accelerator is not None:
+    # 如果使用 Accelerate，手动管理设备分配，避免 DDP 包装（推理任务不需要 DDP）
+    if accelerator is not None:
+        # 获取当前进程对应的设备
         device = accelerator.device
+        print(f"[Rank {accelerator.process_index}] Loading model on {device}")
+        
+        # 加载模型到 CPU，然后手动移动到对应 GPU
+        # 这样可以避免 DDP 包装，减少内存占用
+        if 'LLaDA' in model_name:
+            model = AutoModel.from_pretrained(
+                model_name,
+                trust_remote_code=True,
+                torch_dtype=torch.bfloat16,
+                local_files_only=True
+            )
+        else:
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                trust_remote_code=True,
+                torch_dtype=torch.bfloat16,
+                local_files_only=True
+            )
+        # 手动移动到对应设备，不使用 prepare（避免 DDP 包装）
         model = model.to(device)
-        model = accelerator.prepare(model)
         print(f"[Rank {accelerator.process_index}] Model loaded on {device}")
     else:
+        # 不使用 Accelerate 时，直接加载到指定设备
+        if 'LLaDA' in model_name:
+            model = AutoModel.from_pretrained(model_name,trust_remote_code=True,torch_dtype=torch.bfloat16,local_files_only=True)
+        else:
+            model=AutoModelForCausalLM.from_pretrained(model_name,trust_remote_code=True,torch_dtype=torch.bfloat16,local_files_only=True)
         model = model.to(device)
     
     model.eval()
     best_position=seclect_order(tokenizer,model_name,args,model,task,dev_samples_num,dev_data_path,nshot,steps,gen_length,block_length,temperature,mode,situation,thread,accelerator=accelerator)
-    print(f"Best position: {best_position}")
-    #利用这个位置去跑,只有是true的时候才会生成正确结果
-    if isvalidate is True:
-        results=[]
-        for idx,input in enumerate(tqdm(dataset)):
-            answer=generate(model,tokenizer,input,task,steps,gen_length,block_length,temperature,mode,situation,best_position,nshot,thread=thread)
-            #还得看是哪一种任务
-            results.append(answer)
+    
+    # 只在主进程执行后续操作（评估和保存）
+    if accelerator is None or accelerator.is_main_process:
+        print(f"Best position: {best_position}")
+        #利用这个位置去跑,只有是true的时候才会生成正确结果
+        if isvalidate is True:
+            results=[]
+            for idx,input in enumerate(tqdm(dataset)):
+                answer=generate(model,tokenizer,input,task,steps,gen_length,block_length,temperature,mode,situation,best_position,nshot,thread=thread)
+                #还得看是哪一种任务
+                results.append(answer)
 
-        #计算准确率
-        if task == 'mbpp':
-            # 对于 mbpp，调用 eval_mbpp 生成 Python 文件
-            #记录最好的位置
-            from utils.eval_utils import eval_mbpp
-            #生成测评文件
-            #生成的是对应位置的
-            #这里进行标记,看看是在哪个位置表现最好
-            #直接生成相应的文件,如果之后要评估的话还是需要进行一些改进的
-            print(f"task:{task} Best position: {best_position} dev_samples_num: {dev_samples_num}")
-            if generate_file is True:
-                eval_mbpp(results, dataset, data_path, args, position=f"best_position_{dev_samples_num}")
-        else:
-            #当前位置直接生成即可，使用 result_path 而不是 data_path
-            acc = eval(task, results, dataset, result_path, args, position=best_position)
-            print(f"task:{task} Best position: {best_position} dev_samples_num: {dev_samples_num} Accuracy: {acc:.4f}")
-            # 如果是 mbpp 任务，在所有文件生成后统一评估
+            #计算准确率
+            if task == 'mbpp':
+                # 对于 mbpp，调用 eval_mbpp 生成 Python 文件
+                #记录最好的位置
+                from utils.eval_utils import eval_mbpp
+                #生成测评文件
+                #生成的是对应位置的
+                #这里进行标记,看看是在哪个位置表现最好
+                #直接生成相应的文件,如果之后要评估的话还是需要进行一些改进的
+                print(f"task:{task} Best position: {best_position} dev_samples_num: {dev_samples_num}")
+                if generate_file is True:
+                    eval_mbpp(results, dataset, data_path, args, position=f"best_position_{dev_samples_num}")
+            else:
+                #当前位置直接生成即可，使用 result_path 而不是 data_path
+                acc = eval(task, results, dataset, result_path, args, position=best_position)
+                print(f"task:{task} Best position: {best_position} dev_samples_num: {dev_samples_num} Accuracy: {acc:.4f}")
+                # 如果是 mbpp 任务，在所有文件生成后统一评估
 
-    if output_path:
-        try:
-            base_dir = Path(output_path) / task / f"shot_{nshot}_step_{steps}_gen_{gen_length}" / f"dev_samples_num_{dev_samples_num}"
-            base_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            summary_path = base_dir / f"{timestamp}.json"
-            summary_payload = {
-                'task': task,
-                'best_position': best_position,
-                'dev_samples_num': dev_samples_num,
-                'nshot': nshot,
-                'steps': steps,
-                'gen_length': gen_length,
-                'block_length': block_length,
-                'samples_num': samples_num
-            }
-            with open(summary_path, 'w', encoding='utf-8') as f:
-                json.dump(summary_payload, f, ensure_ascii=False, indent=2)
-            print(f"Best position summary saved to: {summary_path}")
-        except Exception as exc:
-            print(f"Warning: failed to save best position summary to {output_path}: {exc}")
+        if output_path:
+            try:
+                base_dir = Path(output_path) / task / f"shot_{nshot}_step_{steps}_gen_{gen_length}" / f"dev_samples_num_{dev_samples_num}"
+                base_dir.mkdir(parents=True, exist_ok=True)
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                summary_path = base_dir / f"{timestamp}.json"
+                summary_payload = {
+                    'task': task,
+                    'best_position': best_position,
+                    'dev_samples_num': dev_samples_num,
+                    'nshot': nshot,
+                    'steps': steps,
+                    'gen_length': gen_length,
+                    'block_length': block_length,
+                    'samples_num': samples_num
+                }
+                with open(summary_path, 'w', encoding='utf-8') as f:
+                    json.dump(summary_payload, f, ensure_ascii=False, indent=2)
+                print(f"Best position summary saved to: {summary_path}")
+            except Exception as exc:
+                print(f"Warning: failed to save best position summary to {output_path}: {exc}")
 
-    print('-------------------Finish----------------')
+        print('-------------------Finish----------------')
     #在这里记录一下输出路径
     
 
@@ -299,4 +344,12 @@ if __name__=='__main__':
     parser.add_argument('--thread',type=int,default=0.9)
     parser.add_argument('--output_path',type=str,default='./results/best_position')
     args=parser.parse_args()
-    main(args)
+    
+    # 使用 try-finally 确保在程序退出前清理分布式进程组
+    try:
+        main(args)
+    finally:
+        # 清理分布式进程组，避免资源泄漏
+        import torch.distributed as dist
+        if dist.is_initialized():
+            dist.destroy_process_group()
