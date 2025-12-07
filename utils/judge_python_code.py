@@ -1,3 +1,4 @@
+from collections import defaultdict
 import os
 import subprocess
 import concurrent.futures
@@ -7,6 +8,8 @@ from pathlib import Path
 import argparse
 import json
 from datetime import datetime
+
+from sympy import O
 
 def run_python_file(file_path):
     try:
@@ -245,6 +248,111 @@ def evaluate_python_files(folder_path, nshot, steps, gen_length, dev_samples_num
         print(f"  Position {acc['position']}: {acc['accuracy']:.2f}% ({acc['successful_files']}/{acc['total_files']})")
     
     return None
+
+
+
+def evaluate_python_files_positions(folder_path, nshot, steps, gen_length):
+       # 构建目标文件夹路径：shot_{nshot}_step_{steps}_gen_{gen_length}
+       #这里计算一下应该加进去的东西
+    target_folder_name = f"shot_{nshot}_step_{steps}_gen_{gen_length}"
+    target_folder = Path(folder_path) / target_folder_name
+    
+    if not target_folder.exists():
+        print(f"Target folder not found: {target_folder}")
+        return 0
+    
+    print(f"Searching in folder: {target_folder}") 
+
+    # 按 position 分组收集 py 文件和执行结果
+    #这里计算的是upperbound,在这道题上每一个问题的正确率
+    files_by_index = defaultdict(list)
+    # upperbound_acc=[]
+
+    positions_to_check = list(range(nshot + 1))
+    for position in positions_to_check:
+        position_folder = target_folder / f"position_{position}"
+        if not position_folder.exists():
+            print(f"Warning: position_{position} folder not found, skipping...")
+            continue
+    
+        # 找到该 position 下时间戳最新的文件夹,寻找最新的时间戳文件夹
+        timestamp_folders = []
+        for item in position_folder.iterdir():
+            if item.is_dir():
+                # 检查文件夹名是否符合时间戳格式：YYYYMMDD_HHMMSS
+                if re.match(r'^\d{8}_\d{6}$', item.name):
+                    timestamp_folders.append(item)
+
+        #这里进行标记
+        if not timestamp_folders:
+            print(f"No timestamp folders found in position_{position}")
+            continue
+
+        # 找到最新的时间戳文件夹（按名称排序，最新的在最后）
+        latest_timestamp_folder = max(timestamp_folders, key=lambda x: x.name)
+        print(f"Using latest timestamp folder: {latest_timestamp_folder.name} in position_{position}")
+
+        for py_file in latest_timestamp_folder.glob("test_index_*.py"):
+            #提取index
+            match = re.search(r'test_index_(\d+)\.py', py_file.name)
+            if match:
+                idx = match.group(1)
+                files_by_index[idx].append(py_file)
+    
+    #准备并行执行列表
+    #需要运行所有文件来判断状态
+    all_files_to_run=[]
+    for idx,file_list in files_by_index.items():
+        all_files_to_run.extend(file_list)
+    
+    print(f"Total files to execute: {len(all_files_to_run)} across {len(files_by_index)} unique indices.")
+
+    # 字典用于记录每个文件的运行结果: { file_path: status }
+    execution_results = {}
+
+    #并行执行所有文件
+    with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() * 2) as executor:
+        future_to_file= {executor.submit(run_python_file, f): f for f in all_files_to_run}
+
+        try:
+            from tqdm import tqdm
+            iterator = tqdm(concurrent.futures.as_completed(future_to_file), total=len(all_files_to_run))
+        except ImportError:
+            iterator=concurrent.futures.as_completed(future_to_file)
+
+        for future in iterator:
+            file_path, status, message = future.result()
+            execution_results[file_path] = status
+    
+    #计算upperbound acc
+    solved_indices_count=0
+    total_indices=len(files_by_index)
+
+    for idx,file_list in files_by_index.items():
+        is_solved=False
+        for file_path in file_list:
+            if execution_results.get(file_path) == "Success":
+                is_solved=True
+                break
+        if is_solved:
+            solved_indices_count+=1
+    
+    print(f"\n===== Result =====")
+    print(f"Total Unique Indices: {total_indices}")
+    print(f"Solved Indices: {solved_indices_count}")
+    if total_indices>0:
+        accuracy=solved_indices_count/total_indices
+        print(f"Upperbound Accuracy: {accuracy:.2%}")
+    else:
+        accuracy=0.0
+        print("No indices found.")
+    return accuracy
+
+
+
+
+
+
 
 #把main上的文件改成了可以通过一次运行实现
 def main():

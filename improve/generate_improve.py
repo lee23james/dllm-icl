@@ -6,6 +6,12 @@ import os, sys, json
 import numpy as np
 from typing import List, Dict, Tuple
 from transformers.models.electra.modeling_electra import ElectraSelfAttention
+try:
+    import accelerate
+    ACCELERATE_AVAILABLE = True
+except ImportError:
+    ACCELERATE_AVAILABLE = False
+    print("Warning: accelerate not available, multi-GPU support disabled")
 #加入煮目录,方便搜索到相应模块
 current_script_path = os.path.abspath(__file__)
 scripts_dir = os.path.dirname(current_script_path)
@@ -21,10 +27,11 @@ from scripts.eval import generate
 #根据输入进去的来进行选择
 #我先改进一下sudoku一下,因为sudoku的token变化是最大的,我想通过这个
 #这个我想进行在线排序
+#这里我需要修改一下,计算一下upperbound,同时最好看一下关系到的是什么东西,这样才能解决问题
 def generate_improve(model,tokenizer,input,task,steps,gen_length,block_length,temperature,mode,situation,query_position,nshot,mask_id=126336):
     #例子输入进了模型中,我先在要返回的不是答案,而是所有的步骤和answer token的位置
     #对于sudoku的一种适配而已,现在我要做的就是两版本
-    #这里已经有根据输入进来的位置进行评测了
+    #这里已经有根据输入进来的位置进行评测
     zero_position_list = None
     if task=='sudoku':
         zero_position_list=find_zero_position(input['Puzzle'])
@@ -250,19 +257,77 @@ def main(args):
     result_path=args.result_path
     #查看是否是零位置有效
     compute_zero=args.compute_zero
-    dataset=load_dataset(data_path,task)
-    #挖坑准备其他模式
-    #取出前面的部分sample,方便进行取值计算
-    dataset=dataset[:samples_num]
-
+    
+    # 检查是否使用 Accelerate（通过环境变量判断是否通过 accelerate launch 启动）
+    accelerator = None
+    if ACCELERATE_AVAILABLE:
+        # 检查是否通过 accelerate launch 启动（会设置 WORLD_SIZE 环境变量）
+        if 'WORLD_SIZE' in os.environ and int(os.environ.get('WORLD_SIZE', '1')) > 1:
+            accelerator = accelerate.Accelerator()
+            print(f"[Rank {accelerator.process_index}/{accelerator.num_processes}] Accelerate initialized")
+        elif 'ACCELERATE_CONFIG' in os.environ:
+            # 也可能通过配置文件启动
+            accelerator = accelerate.Accelerator()
+            if accelerator.num_processes > 1:
+                print(f"[Rank {accelerator.process_index}/{accelerator.num_processes}] Accelerate initialized")
+            else:
+                accelerator = None
+    
+    # 加载完整数据集（用于评估时）
+    full_dataset = load_dataset(data_path, task)
+    # 取出前面的部分sample,方便进行取值计算
+    full_dataset = full_dataset[:samples_num]
+    
+    # 如果使用 Accelerate，分割数据集用于并行处理
+    if accelerator is not None:
+        with accelerator.split_between_processes(full_dataset) as subset_dataset:
+            dataset = subset_dataset
+            print(f'[Rank {accelerator.process_index}] Load dataset: {len(dataset)} samples (total: {len(full_dataset)})')
+    else:
+        dataset = full_dataset
+        print('------------------Load dataset------------------')
+    
     print('------------------ load model -----------------------')
-    tokenizer=AutoTokenizer.from_pretrained(model_name,trust_remote_code=True)
-    model=AutoModel.from_pretrained(model_name,trust_remote_code=True,torch_dtype=torch.bfloat16,local_files_only=True).to(device)
+    tokenizer=AutoTokenizer.from_pretrained(model_name,trust_remote_code=True,local_files_only=True)
+    
+    # 如果使用 Accelerate，手动管理设备分配，避免 DDP 包装（推理任务不需要 DDP）
+    if accelerator is not None:
+        # 获取当前进程对应的设备
+        device = accelerator.device
+        print(f"[Rank {accelerator.process_index}] Loading model on {device}")
+        
+        # 加载模型到 CPU，然后手动移动到对应 GPU
+        # 这样可以避免 DDP 包装，减少内存占用
+        model = AutoModel.from_pretrained(
+            model_name,
+            trust_remote_code=True,
+            torch_dtype=torch.bfloat16,
+            local_files_only=True
+        )
+        # 手动移动到对应设备，不使用 prepare（避免 DDP 包装）
+        model = model.to(device)
+        print(f"[Rank {accelerator.process_index}] Model loaded on {device}")
+    else:
+        # 不使用 Accelerate 时，直接加载到指定设备
+        model = AutoModel.from_pretrained(model_name,trust_remote_code=True,torch_dtype=torch.bfloat16,local_files_only=True).to(device)
+    
     model.eval()
     print('--------------------start pre-processing----------------')
     answers=[]
     zero_answers=[]#对照组
-    for idx, input_item in enumerate(tqdm(dataset)):
+    
+    # 使用 tqdm 时，只在主进程显示进度条
+    dataset_iter = dataset
+    if accelerator is not None and accelerator.num_processes > 1:
+        # 多进程时，只在主进程显示进度条
+        if accelerator.is_main_process:
+            dataset_iter = tqdm(dataset, desc=f"[Rank {accelerator.process_index}] Processing")
+        else:
+            dataset_iter = dataset
+    else:
+        dataset_iter = tqdm(dataset, desc="Processing")
+    
+    for idx, input_item in enumerate(dataset_iter):
         #这里我先硬编码成一半,之后需要多少可以通过别的来确定
         #针对每一种输入,我都要进行pre-processing,然后选择最好的位置和放在最后进行比较
         if 'Instruct' in model_name:
@@ -271,8 +336,10 @@ def main(args):
             situation='base'
         
         best_position=select_position(model,tokenizer,version,nshot,input_item,task,mode,int(steps/4),gen_length,block_length,temperature,situation,lamda1,lamda2)
-        print(f"Best position for input {idx} is {best_position}")
-        print('--------------------end pre-processing----------------')
+        if accelerator is not None:
+            print(f"[Rank {accelerator.process_index}] Best position for input {idx} is {best_position}")
+        else:
+            print(f"Best position for input {idx} is {best_position}")
         #开始进行测试
         #我得设置对照组,看看放在最后对比结果
         answer=generate(model,tokenizer,input_item,task,steps,gen_length,block_length,temperature,mode,situation,best_position,nshot)
@@ -282,26 +349,62 @@ def main(args):
             #记录放置在最后的位置
             zero_answer=generate(model,tokenizer,input_item,task,steps,gen_length,block_length,temperature,mode,situation,0,nshot)
             zero_answers.append(zero_answer)
-            zero_acc=eval(task,zero_answers,dataset,result_path,args)
+        else:
+            zero_answers.append(None)
+    
+    # 如果使用 Accelerate，收集所有进程的结果
+    if accelerator is not None and accelerator.num_processes > 1:
+        import torch.distributed as dist
+        if dist.is_initialized():
+            # 收集 answers
+            all_answers_list = [None] * accelerator.num_processes
+            dist.all_gather_object(all_answers_list, answers)
+            
+            # 收集 zero_answers（如果需要）
+            if compute_zero:
+                all_zero_answers_list = [None] * accelerator.num_processes
+                dist.all_gather_object(all_zero_answers_list, zero_answers)
+            else:
+                all_zero_answers_list = None
+            
+            # 在主进程中合并结果
+            if accelerator.is_main_process:
+                # 展平所有结果，按进程顺序合并
+                merged_answers = []
+                for proc_answers in all_answers_list:
+                    if proc_answers is not None:
+                        merged_answers.extend(proc_answers)
+                answers = merged_answers
+                
+                if compute_zero:
+                    merged_zero_answers = []
+                    for proc_zero_answers in all_zero_answers_list:
+                        if proc_zero_answers is not None:
+                            merged_zero_answers.extend(proc_zero_answers)
+                    zero_answers = merged_zero_answers
+            else:
+                # 非主进程不继续执行评估
+                return
+    
+    # 只在主进程执行评估和保存
+    if accelerator is None or accelerator.is_main_process:
+        #写入对应文件
+        acc=eval(task,answers,full_dataset,result_path,args)
+        # zero_acc=eval(task,zero_answers,dataset,result_path,args)
+        if acc is not None:
+            print(f"Accuracy: {acc:.4f}")
+        else:
+            print("Accuracy: Not available (task may not return accuracy)")
+        
+        if compute_zero:
+            zero_acc=eval(task,zero_answers,full_dataset,result_path,args)
             if zero_acc is not None:
                 print(f"Zero Accuracy: {zero_acc:.4f}")
             else:
                 print("Zero Accuracy: Not available (task may not return accuracy)")
-        else:
-            zero_answers.append(None)
+        #把产生的结果记录一下
 
-        
-    
-    #写入对应文件
-    acc=eval(task,answers,dataset,result_path,args)
-    # zero_acc=eval(task,zero_answers,dataset,result_path,args)
-    if acc is not None:
-        print(f"Accuracy: {acc:.4f}")
-    else:
-        print("Accuracy: Not available (task may not return accuracy)")
-    #把产生的结果记录一下
-
-
+#这里我应该提供给
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
     parser.add_argument('--task',type=str,default='sudoku')
@@ -317,9 +420,18 @@ if __name__=='__main__':
     parser.add_argument('--samples_num',type=int,default=200)
     parser.add_argument('--mode',type=str,default='original')
     parser.add_argument('--result_path',type=str,default='./results/sudoku/improve')
+    #我再想要不要学习一下学习率(或者我手动调参,让他们做到最好)
     parser.add_argument('--lamda1',type=float,default=0.8)
     parser.add_argument('--lamda2',type=float,default=0.2)
     #是否计算最后一个位置
     parser.add_argument('--compute_zero',action='store_true',default=False)
     args=parser.parse_args()
-    main(args)
+    
+    # 使用 try-finally 确保在程序退出前清理分布式进程组
+    try:
+        main(args)
+    finally:
+        # 清理分布式进程组，避免资源泄漏
+        import torch.distributed as dist
+        if dist.is_initialized():
+            dist.destroy_process_group()

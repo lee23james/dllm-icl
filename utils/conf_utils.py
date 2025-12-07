@@ -511,8 +511,8 @@ def cal_accmulate_conf_countdown(
 
     #对每个变量进行计算
     if current_conf is not None:
-        variables={
-            'conf': conf,
+    variables={
+        'conf': conf,
             # 'conf_diff': conf_diff,
             # 'entropy': entropy,
             'token_change': token_change,
@@ -523,8 +523,8 @@ def cal_accmulate_conf_countdown(
             'conf': conf,
             # 'conf_diff': conf_diff,
             # 'entropy': entropy,
-            'token_change': token_change,
-        }
+        'token_change': token_change,
+    }
     #要计算的量
     for var_name, var_list in variables.items():
         result[var_name]={}
@@ -684,8 +684,8 @@ def cal_accmulate_conf_gsm8k(
 
     #对每个变量进行计算
     if current_conf is not None:
-        variables={
-            'conf': conf,
+    variables={
+        'conf': conf,
             # 'conf_diff': conf_diff,
             # 'entropy': entropy,
             'token_change': token_change,
@@ -696,8 +696,8 @@ def cal_accmulate_conf_gsm8k(
             'conf': conf,
             # 'conf_diff': conf_diff,
             # 'entropy': entropy,
-            'token_change': token_change,
-        }
+        'token_change': token_change,
+    }
     #要计算的量
     for var_name, var_list in variables.items():
         result[var_name]={}
@@ -855,16 +855,16 @@ def cal_accmulate_conf_math(
     #计算token_change所有值为1的数量
     token_change_positive_total = cal_token_change_positive_total(token_change)
     if current_conf is not None:
-        variables={
-            'conf': conf,
+    variables={
+        'conf': conf,
             'token_change': token_change,
             'current_conf':current_conf,#当前的conf,我想看的是是不是有相关的指标可以进行记录(就是呈现正比),这个应该适合conf_diff是相关的(但是conf_diff作为解码策略他们已经用了,感觉累加的是比较适合说理的)
         }
     else:
         variables={
             'conf': conf,
-            'token_change': token_change,
-        }
+        'token_change': token_change,
+    }
     #要计算的量
     for var_name, var_list in variables.items():
         result[var_name]={}

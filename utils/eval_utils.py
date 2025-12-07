@@ -177,6 +177,46 @@ def eval_sudoku(results,dataset,result_path,args,position,iswrite=True):
     #这里返回准确率,方便后续画点
     return accuracy
 
+#接受一群输入来计算各个位置的准确率,这个不进行记录,直接计算即可
+#这里的result结构式list[list[str]],第一个list是问题的列表,第二个list是答案的列表,总共position+1个候选答案,然后根据这些候选答案来看看有没有一个是正确答案,如果有一个是正确答案,那么truenum+1
+def  eval_sudoku_position(results,dataset):
+    """
+    评估sudoku数据集在各个位置的准确率
+    Args:
+        results: list[list[str]], 外层list是问题的列表,内层list是答案的列表,总共position+1个候选答案
+        dataset: 数据集,每个元素包含'Solution'字段作为正确答案
+    Returns:
+        accuracy: float, 准确率 (至少有一个候选答案正确的样本数 / 总样本数)
+    """
+    true_num = 0
+    
+    # 遍历每个问题及其候选答案
+    for index, candidate_answers in enumerate(results):
+        puzzle_data = dataset[index]
+        ground_truth = puzzle_data['Solution']
+        
+        # 检查这position+1个候选答案中是否有任何一个正确
+        is_correct = False
+        for answer in candidate_answers:
+            if check_solution(answer, ground_truth):
+                is_correct = True
+                break
+        
+        # 如果有一个是正确答案,那么truenum+1
+        if is_correct:
+            true_num += 1
+    
+    # 计算准确率
+    accuracy = true_num / len(dataset) if len(dataset) > 0 else 0.0
+    
+    print('----------------- Finish Evaluating Position Accuracy -------------------')
+    print(f"Final Accuracy: {accuracy:.4f} ({true_num}/{len(dataset)})")
+    
+    # 返回准确率,方便后续使用
+    return accuracy
+
+
+
 #轮到countdown了
 def countdown_check(model_answer,ground_truth):
     if ground_truth in model_answer:
@@ -268,6 +308,46 @@ def eval_countdown(results, dataset, result_path, args, position, iswrite=True):
     
     #这里返回准确率,方便后续画点
     return accuracy
+
+#接受一群输入来计算各个位置的准确率,这个不进行记录,直接计算即可
+#这里的result结构式list[list[str]],第一个list是问题的列表,第二个list是答案的列表,总共position+1个候选答案,然后根据这些候选答案来看看有没有一个是正确答案,如果有一个是正确答案,那么truenum+1
+def  eval_countdown_position(results,dataset):
+    """
+    评估countdown数据集在各个位置的准确率
+    Args:
+        results: list[list[str]], 外层list是问题的列表,内层list是答案的列表,总共position+1个候选答案
+        dataset: 数据集,每个元素包含'output'字段作为正确答案
+    Returns:
+        accuracy: float, 准确率 (至少有一个候选答案正确的样本数 / 总样本数)
+    """
+    true_num = 0
+    
+    # 遍历每个问题及其候选答案
+    for index, candidate_answers in enumerate(results):
+        puzzle_data = dataset[index]
+        ground_truth = puzzle_data['output']
+        
+        # 检查这position+1个候选答案中是否有任何一个正确
+        is_correct = False
+        for answer in candidate_answers:
+            if countdown_check(answer, ground_truth):
+                is_correct = True
+                break
+        
+        # 如果有一个是正确答案,那么truenum+1
+        if is_correct:
+            true_num += 1
+    
+    # 计算准确率
+    accuracy = true_num / len(dataset) if len(dataset) > 0 else 0.0
+    
+    print('----------------- Finish Evaluating Position Accuracy -------------------')
+    print(f"Final Accuracy: {accuracy:.4f} ({true_num}/{len(dataset)})")
+    
+    # 返回准确率,方便后续使用
+    return accuracy
+
+
 
 # 评估math500并收集准确率
 def collect_answer_from_response(response):
@@ -394,6 +474,40 @@ def eval_math500(results,dataset,result_path,args,position,iswrite=True):
     #这里返回准确率,方便后续画点
     return accuracy
 
+def eval_math500_position(results,dataset):
+    """
+    评估math500数据集在各个位置的准确率
+    Args:
+        results: list[list[str]], 外层list是问题的列表,内层list是答案的列表,总共position+1个候选答案
+        dataset: 数据集,每个元素包含'answer'字段作为正确答案
+    Returns:
+        accuracy: float, 准确率 (至少有一个候选答案正确的样本数 / 总样本数)
+    """
+    true_num = 0
+    
+    # 遍历每个问题及其候选答案
+    for index, candidate_answers in enumerate(results):
+        puzzle_data = dataset[index]
+        ground_truth = puzzle_data['answer']
+        # 检查这position+1个候选答案中是否有任何一个正确
+        is_correct = False
+        for answer in candidate_answers:    
+            if ground_truth in collect_answer_from_response(answer):
+                is_correct = True
+                break
+        
+        # 如果有一个是正确答案,那么truenum+1
+        if is_correct:
+            true_num += 1
+    
+    # 计算准确率
+    accuracy = true_num / len(dataset) if len(dataset) > 0 else 0.0
+    
+    print('----------------- Finish Evaluating Position Accuracy -------------------')
+    print(f"Final Accuracy: {accuracy:.4f} ({true_num}/{len(dataset)})")
+    
+    # 返回准确率,方便后续使用
+    return accuracy
 
 #开始评估mbpp
 #这个是针对mbpp-full的,现在我需要扩展到sanitized子集
@@ -512,6 +626,65 @@ def eval_mbpp(results, dataset, result_dir, args,position):
     # 生成具体的测试文件到该目录下
     generate_mbpp_test_files(dataset, results, output_dir)
 
+#results:list[list[str]],第一个list是问题的列表,第二个list是答案的列表,总共position+1个候选答案
+#resultdir生成的是文件放置的位置
+def eval_mbpp_position(results, dataset, result_dir=None, args=None, nshot=None):
+    """
+    评估MBPP数据集在各个位置的准确率（upperbound）
+    
+    Args:
+        results: list[list[str]], 外层list是问题的列表,内层list是答案的列表,总共position+1个候选答案
+        dataset: 数据集
+        result_dir: 结果目录（必须提供或通过args.result_path获取）
+        args: 参数对象（必须提供，包含nshot, steps, gen_length等）
+        nshot: shot数量（必须提供或通过args.nshot获取）
+    Returns:
+        accuracy: float, upperbound准确率（通过evaluate_python_files_positions计算）
+    """
+    from utils.judge_python_code import evaluate_python_files_positions
+    
+    # 参数检查
+    assert args is not None, "args must be provided"
+    assert len(results) > 0, "results cannot be empty"
+    assert len(results) == len(dataset), f"results length ({len(results)}) must match dataset length ({len(dataset)})"
+    
+    # 获取必要参数
+    if nshot is None:
+        nshot = getattr(args, 'nshot', None)
+    assert nshot is not None and nshot >= 0, "nshot must be provided via args.nshot or nshot parameter"
+    
+    if result_dir is None:
+        result_dir = getattr(args, 'result_path', None)
+    assert result_dir is not None, "result_dir must be provided via result_dir parameter or args.result_path"
+    
+    steps = getattr(args, 'steps', None)
+    assert steps is not None, "args.steps must be provided"
+    
+    gen_length = getattr(args, 'gen_length', None)
+    assert gen_length is not None, "args.gen_length must be provided"
+    
+    # 检查 results 结构：results[question_index] = [answer_pos0, answer_pos1, ..., answer_pos_nshot]
+    assert isinstance(results[0], list), "results must be list[list[str]]"
+    assert len(results[0]) == nshot + 1, f"Each question should have {nshot + 1} answers (one for each position), but got {len(results[0])}"
+    
+    # 将按问题组织的结果转换为按位置组织：results_by_position[position] = [answer1, answer2, ...]
+    results_by_position = [[] for _ in range(nshot + 1)]
+    for question_index, candidate_answers in enumerate(results):
+        assert len(candidate_answers) == nshot + 1, f"Question {question_index} should have {nshot + 1} answers"
+        for position in range(nshot + 1):
+            results_by_position[position].append(candidate_answers[position])
+    
+    # 为每个位置生成测试文件
+    for position in range(nshot + 1):
+        eval_mbpp(results_by_position[position], dataset, result_dir, args, position)
+    
+    # 调用 evaluate_python_files_positions 计算 upperbound accuracy
+    accuracy = evaluate_python_files_positions(result_dir, nshot, steps, gen_length)
+    
+    print('----------------- Finish Evaluating MBPP Position Accuracy -------------------')
+    print(f"Upperbound Accuracy: {accuracy:.4f}")
+    
+    return accuracy
 
 
 def normalize_number(s: str) -> str:
@@ -886,3 +1059,32 @@ def eval(
     else:
         raise NotImplementedError(f"Mode {task} not implemented.")
 
+#results指的是list[list[str]],第一个list是问题的列表,第二个list是答案的列表,总共position+1个候选答案
+def eval_position(task,results,dataset,result_dir=None,args=None,nshot=None):
+    """
+    统一的position评估接口
+    
+    Args:
+        task: 任务名称
+        results: list[list[str]], 外层list是问题的列表,内层list是答案的列表,总共position+1个候选答案
+        dataset: 数据集
+        result_dir: 结果目录（mbpp任务需要）
+        args: 参数对象（mbpp任务需要）
+        nshot: shot数量（mbpp任务需要）
+    Returns:
+        accuracy: float, upperbound准确率
+    """
+    if task=='sudoku':
+        return eval_sudoku_position(results,dataset)
+    elif task=='countdown':
+        return eval_countdown_position(results,dataset)
+    elif task=='math500':
+        return eval_math500_position(results,dataset)
+    #mbpp比较特殊,需要额外参数来生成测试文件,统一接口
+    elif task=='mbpp':
+        assert result_dir is not None, "result_dir must be provided for mbpp task"
+        assert args is not None, "args must be provided for mbpp task"
+        assert nshot is not None, "nshot must be provided for mbpp task"
+        return eval_mbpp_position(results,dataset,result_dir,args,nshot)
+    else:
+        raise NotImplementedError(f"Task {task} not supported in eval_position")
