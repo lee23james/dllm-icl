@@ -32,9 +32,9 @@ def generate_improve(model,tokenizer,input,task,steps,gen_length,block_length,te
     #例子输入进了模型中,我先在要返回的不是答案,而是所有的步骤和answer token的位置
     #对于sudoku的一种适配而已,现在我要做的就是两版本
     #这里已经有根据输入进来的位置进行评测
-    zero_position_list = None
-    if task=='sudoku':
-        zero_position_list=find_zero_position(input['Puzzle'])
+    # zero_position_list = None
+    # if task=='sudoku':
+    #     zero_position_list=find_zero_position(input['Puzzle'])
     query=query_extract(input,task,query_position,gen_length,nshot)
     if situation=='base':
         user_input=query
@@ -59,7 +59,7 @@ def generate_improve(model,tokenizer,input,task,steps,gen_length,block_length,te
         return_order=False,return_conf_diff=False,return_entropy=False,return_token_change=True,return_conf=True)
         x_answer=x[:,first_mask_pos:last_mask_pos+1]
         if task=='sudoku':
-            answer_token_positions=find_answer_token_positions(x_answer[0],tokenizer,space_id=220,enter_id=198,zero_position_list=zero_position_list)
+            answer_token_positions=find_answer_token_positions(x_answer[0],tokenizer,space_id=220,enter_id=198)
         elif task=='countdown':
             #找到了需要去关注的地方
             answer_token_positions=find_countdown_answer_token_positions(x_answer[0],tokenizer,space_id=220,enter_id=198)
@@ -389,7 +389,8 @@ def main(args):
     # 只在主进程执行评估和保存
     if accelerator is None or accelerator.is_main_process:
         #写入对应文件
-        acc=eval(task,answers,full_dataset,result_path,args)
+        # 使用 "auto-icl" 作为 position，表示这是自动选择的最佳位置
+        acc=eval(task,answers,full_dataset,result_path,args,position="auto-icl")
         # zero_acc=eval(task,zero_answers,dataset,result_path,args)
         if acc is not None:
             print(f"Accuracy: {acc:.4f}")
@@ -397,7 +398,7 @@ def main(args):
             print("Accuracy: Not available (task may not return accuracy)")
         
         if compute_zero:
-            zero_acc=eval(task,zero_answers,full_dataset,result_path,args)
+            zero_acc=eval(task,zero_answers,full_dataset,result_path,args,position=0)
             if zero_acc is not None:
                 print(f"Zero Accuracy: {zero_acc:.4f}")
             else:

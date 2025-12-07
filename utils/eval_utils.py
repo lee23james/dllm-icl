@@ -28,7 +28,8 @@ def query_extract(input, task, query_position, gen_length,nshot=None,iscot=False
     elif task =='countdown':
         return countdown_prompt(input['input'],query_position, nshot,gen_length)
     elif task =='sudoku':
-        return sudoku_prompt(input['Puzzle'],query_position, gen_length,nshot,iscot)
+        # sudoku 任务不支持 iscot，始终传递 False
+        return sudoku_prompt(input['Puzzle'],query_position, gen_length,nshot)
     #修改逻辑,我先在需要根据nshot统一放在一个list,然后依次取出进行计算
     elif task =='gsm8k':
         return gsm8k_prompt(input['question'],query_position, nshot, gen_length)
@@ -810,6 +811,45 @@ def eval_gsm8k(results,dataset,result_path,args,position,iswrite=True):
     return accuracy
 
 
+#接受一群输入来计算各个位置的准确率,这个不进行记录,直接计算即可
+#这里的result结构式list[list[str]],第一个list是问题的列表,第二个list是答案的列表,总共position+1个候选答案,然后根据这些候选答案来看看有没有一个是正确答案,如果有一个是正确答案,那么truenum+1
+def eval_gsm8k_position(results,dataset):
+    """
+    评估gsm8k数据集在各个位置的准确率
+    Args:
+        results: list[list[str]], 外层list是问题的列表,内层list是答案的列表,总共position+1个候选答案
+        dataset: 数据集,每个元素包含'answer'字段作为正确答案
+    Returns:
+        accuracy: float, 准确率 (至少有一个候选答案正确的样本数 / 总样本数)
+    """
+    true_num = 0
+    
+    # 遍历每个问题及其候选答案
+    for index, candidate_answers in enumerate(results):
+        puzzle_data = dataset[index]
+        ground_truth = puzzle_data['answer']
+        
+        # 检查这position+1个候选答案中是否有任何一个正确
+        is_correct = False
+        for answer in candidate_answers:
+            if gsm8k_check(answer, ground_truth):
+                is_correct = True
+                break
+        
+        # 如果有一个是正确答案,那么truenum+1
+        if is_correct:
+            true_num += 1
+    
+    # 计算准确率
+    accuracy = true_num / len(dataset) if len(dataset) > 0 else 0.0
+    
+    print('----------------- Finish Evaluating Position Accuracy -------------------')
+    print(f"Final Accuracy: {accuracy:.4f} ({true_num}/{len(dataset)})")
+    
+    # 返回准确率,方便后续使用
+    return accuracy
+
+
 def gpqa_check(model_answer:str,ground_truth:str)->bool:
     pattern=r"The answer is\s*\(([A-D])\)"
     match=re.search(pattern,model_answer)
@@ -1086,5 +1126,7 @@ def eval_position(task,results,dataset,result_dir=None,args=None,nshot=None):
         assert args is not None, "args must be provided for mbpp task"
         assert nshot is not None, "nshot must be provided for mbpp task"
         return eval_mbpp_position(results,dataset,result_dir,args,nshot)
+    elif task=='gsm8k':
+        return eval_gsm8k_position(results,dataset)
     else:
         raise NotImplementedError(f"Task {task} not supported in eval_position")

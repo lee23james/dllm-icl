@@ -709,7 +709,6 @@ A:
 
     index=0
     for idx,_ in enumerate(math_prompt_parts_sub):
-        print(f"[DEBUG math_500_prompt] Loop: idx={idx}, index={index}, len(math_prompt_parts)={len(math_prompt_parts)}, question_insert_pos={nshot-query_position}")
         if idx != nshot-query_position:
             if index >= len(math_prompt_parts):
                 # print(f"[DEBUG math_500_prompt] ERROR: index ({index}) >= len(math_prompt_parts) ({len(math_prompt_parts)})")

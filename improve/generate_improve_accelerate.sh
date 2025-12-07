@@ -12,9 +12,9 @@ echo "========================================"
 # ========================================
 # Sudoku Task
 # ========================================
-echo "--------------------------------"
-echo "Running Sudoku task"
-echo "--------------------------------"
+# echo "--------------------------------"
+# echo "Running Sudoku task"
+# echo "--------------------------------"
 
 CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
     --multi_gpu \
@@ -42,9 +42,9 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
 # ========================================
 # Countdown Task
 # ========================================
-# echo "--------------------------------"
-# echo "Running Countdown task"
-# echo "--------------------------------"
+echo "--------------------------------"
+echo "Running Countdown task"
+echo "--------------------------------"
 
 # CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
 #     --multi_gpu \
@@ -56,25 +56,25 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
 #     --task countdown \
 #     --model_name /data/share/model_weight/llada/LLaDA-8B-Base \
 #     --device cuda:0 \
-#     --version all \
+#     --version answer_token \
 #     --nshot 4 \
-#     --steps 128 \
-#     --gen_length 128 \
-#     --block_length 128 \
+#     --steps 32 \
+#     --gen_length 32 \
+#     --block_length 32 \
 #     --temperature 0.0 \
 #     --mode original \
-#     --data_path ./data/countdown.csv \
-#     --result_path ./results/countdown/improve \
-#     --samples_num 200 \
-#     --lamda1 0.8 \
-#     --lamda2 0.2
+#     --data_path ./data/countdown.jsonl \
+#     --result_path ./results/countdown_results \
+#     --samples_num 4 \
+#     --lamda1 1 \
+#     --lamda2 0
 
 # # ========================================
 # # Math500 Task
 # # ========================================
-# echo "--------------------------------"
-# echo "Running Math500 task"
-# echo "--------------------------------"
+echo "--------------------------------"
+echo "Running Math500 task"
+echo "--------------------------------"
 
 # CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
 #     --multi_gpu \
@@ -86,62 +86,62 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
 #     --task math500 \
 #     --model_name /data/share/model_weight/llada/LLaDA-8B-Base \
 #     --device cuda:0 \
-#     --version all \
+#     --version answer_token \
+#     --nshot 4 \
+#     --steps 256 \
+#     --gen_length 256 \
+#     --block_length 256 \
+#     --temperature 0.0 \
+#     --mode original \
+#     --data_path ./data/math500.jsonl \
+#     --result_path ./results/math500_results \
+#     --samples_num 10 \
+#     --lamda1 1 \
+#     --lamda2 0
+
+# ========================================
+# MBPP Task
+# ========================================
+# echo "--------------------------------"
+# echo "Running MBPP task"
+# echo "--------------------------------"
+
+# CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
+#     --multi_gpu \
+#     --num_processes=4 \
+#     --num_machines=1 \
+#     --mixed_precision=no \
+#     --main_process_port=29503 \
+#     improve/generate_improve.py \
+#     --task mbpp \
+#     --model_name /data/share/model_weight/llada/LLaDA-8B-Base \
+#     --device cuda:0 \
+#     --version answer_token \
 #     --nshot 4 \
 #     --steps 128 \
 #     --gen_length 128 \
 #     --block_length 128 \
 #     --temperature 0.0 \
 #     --mode original \
-#     --data_path ./data/math500.json \
-#     --result_path ./results/math500/improve \
-#     --samples_num 200 \
-#     --lamda1 0.8 \
-#     --lamda2 0.2
+#     --data_path ./data/mbpp.json \
+#     --result_path ./results/mbpp_results \
+#     --samples_num 10 \
+#     --lamda1 1.0 \
+#     --lamda2 0.0
 
-# ========================================
-# MBPP Task
-# ========================================
-echo "--------------------------------"
-echo "Running MBPP task"
-echo "--------------------------------"
-
-CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
-    --multi_gpu \
-    --num_processes=4 \
-    --num_machines=1 \
-    --mixed_precision=no \
-    --main_process_port=29503 \
-    improve/generate_improve.py \
-    --task mbpp \
-    --model_name /data/share/model_weight/llada/LLaDA-8B-Base \
-    --device cuda:0 \
-    --version answer_token \
-    --nshot 1 \
-    --steps 128 \
-    --gen_length 128 \
-    --block_length 128 \
-    --temperature 0.0 \
-    --mode original \
-    --data_path ./data/mbpp.json \
-    --result_path ./results/mbpp_results \
-    --samples_num 4 \
-    --lamda1 1.0 \
-    --lamda2 0.0
-
-python utils/judge_python_code.py \
-    --folder_path results/mbpp_results \
-    --output_path params/conf_params/mbpp/accuracy \
-    --nshot 1 \
-    --steps 128 \
-    --gen_length 128 \
-    --find_not_position
+# python utils/judge_python_code.py \
+#     --folder_path results/mbpp_results \
+#     --output_path params/conf_params/mbpp/accuracy \
+#     --nshot 4 \
+#     --steps 128 \
+#     --gen_length 128 \
+#     --find_not_position
 # ========================================
 # GSM8K Task
 # ========================================
-# echo "--------------------------------"
-# echo "Running GSM8K task"
-# echo "--------------------------------"
+echo "--------------------------------"
+echo "Running GSM8K task"
+echo "--------------------------------"
 
 # CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
 #     --multi_gpu \
@@ -153,18 +153,18 @@ python utils/judge_python_code.py \
 #     --task gsm8k \
 #     --model_name /data/share/model_weight/llada/LLaDA-8B-Base \
 #     --device cuda:0 \
-#     --version all \
+#     --version answer_token \
 #     --nshot 4 \
-#     --steps 128 \
-#     --gen_length 128 \
-#     --block_length 128 \
+#     --steps 256 \
+#     --gen_length 256 \
+#     --block_length 256 \
 #     --temperature 0.0 \
 #     --mode original \
-#     --data_path ./data/gsm8k.json \
-#     --result_path ./results/gsm8k/improve \
-#     --samples_num 200 \
-#     --lamda1 0.8 \
-#     --lamda2 0.2
+#     --data_path ./data/gsm8k.jsonl \
+#     --result_path ./results/gsm8k_results \
+#     --samples_num 4 \
+#     --lamda1 1.0 \
+#     --lamda2 0.0
 
 # echo "========================================"
 # echo "All tasks completed!"
