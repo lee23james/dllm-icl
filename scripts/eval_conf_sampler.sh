@@ -1,0 +1,51 @@
+#测试一下自己的代码,看看能不能用conf_sampler进行测试
+#这里默认num=0
+CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
+    --multi_gpu \
+    --num_processes=4 \
+    --num_machines=1 \
+    --mixed_precision=no \
+    --main_process_port=29500 \
+    scripts/eval.py \
+    --task sudoku \
+    --model_name /data/share/model_weight/llada/LLaDA-8B-Base \
+    --device cuda:0 \
+    --nshot 4 \
+    --steps 32 \
+    --gen_length 32 \
+    --block_length 32 \
+    --temperature 0.0 \
+    --mode conf_sampler \
+    --data_path ./data/sudoku.csv \
+    --result_path ./results/sudoku_results \
+    --max_samples 2 \
+    --seed 1234 \
+    --iscot False \
+    --thread 0.9 \
+    --lambd 0.0 \
+    --alpha 10 \
+
+CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
+    --multi_gpu \
+    --num_processes=4 \
+    --num_machines=1 \
+    --mixed_precision=no \
+    --main_process_port=29500 \
+    scripts/eval.py \
+    --task gsm8k \
+    --model_name /data/share/model_weight/llada/LLaDA-8B-Base \
+    --device cuda:0 \
+    --nshot 4 \
+    --steps 256 \
+    --gen_length 256 \
+    --block_length 256 \
+    --temperature 0.0 \
+    --mode conf_sampler \
+    --data_path ./data/gsm8k.jsonl \
+    --result_path ./results/gsm8k_results \
+    --max_samples 2 \
+    --seed 1234 \
+    --iscot False \
+    --thread 0.9 \
+    --lambd 0.25 \
+    --alpha 10 \

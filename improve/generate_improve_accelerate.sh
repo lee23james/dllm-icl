@@ -16,16 +16,14 @@ echo "========================================"
 # echo "Running Sudoku task"
 # echo "--------------------------------"
 
-CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
-    --multi_gpu \
-    --num_processes=4 \
+CUDA_VISIBLE_DEVICES=3 accelerate launch \
+    --num_processes=1 \
     --num_machines=1 \
     --mixed_precision=no \
     --main_process_port=29500 \
     improve/generate_improve.py \
     --task sudoku \
-    --model_name /data/share/model_weight/llada/LLaDA-8B-Base \
-    --device cuda:0 \
+    --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
     --version answer_token \
     --nshot 4 \
     --steps 32 \

@@ -28,7 +28,7 @@ except ImportError:
 #输入进来的指令是当作l,后面加了一维,变成b,l
 #gpqa和其他的不一样,gpqa输出答案组合,而不是一个答案
 #在这里我要计算upperbound,,思路就是针对每一道题,看看在4个位置上的结果,如果有一个位置是正确的那就是正确的
-def generate(model,tokenizer,input,task,steps,gen_length,block_length,temperature,mode,situation,query_position,nshot=None,iscot=False,thread=None,mask_id=126336):
+def generate(model,tokenizer,input,task,steps,gen_length,block_length,temperature,mode,situation,query_position,nshot=None,iscot=False,thread=None,mask_id=126336,lambd=1,alpha=1,baseline_name='P_baseline.json',num=None):
     #我需要去修改内部逻辑,因为原始generate是针对query放在最后的情况,所以并不需要去考虑加mdm_mask,但是目前需要加进去,因为我把query放在中间了
     #修改这个的逻辑,如果是gpqa那么就统一放在一个list依次计算答案即可
     #在gpqa这里,position多少不重要因为都要进行计算(后续如果真的需要再改)
@@ -68,6 +68,9 @@ def generate(model,tokenizer,input,task,steps,gen_length,block_length,temperatur
         elif mode=='fast_dllm':
             from src.generate import generate_with_fast_dllm
             out=generate_with_fast_dllm(model,prompt,first_mask_pos,steps,gen_length,block_length,temperature,cfg_scale=0.,remasking='low_confidence',threshold=thread)[0]#现在需要的是第一个参数
+        elif mode=='conf_sampler':
+            from src.generate import generate_with_conf_sampler
+            out=generate_with_conf_sampler(model,prompt,first_mask_pos,steps,gen_length,block_length,lambd=lambd,alpha=alpha,baseline_name=baseline_name,temperature=temperature,cfg_scale=0.,remasking='low_confidence',num=num)
         else:
             raise NotImplementedError(f"Mode {mode} not implemented.")
 
@@ -101,6 +104,9 @@ def generate(model,tokenizer,input,task,steps,gen_length,block_length,temperatur
                 if mode=='original':
                     from src.generate import generate
                     out=generate(model,prompt,first_mask_pos,steps,gen_length,block_length,temperature,cfg_scale=0.,remasking='low_confidence')
+                elif mode=='conf_sampler':
+                    from src.generate import generate_with_conf_sampler
+                    out=generate_with_conf_sampler(model,prompt,first_mask_pos,steps,gen_length,block_length,temperature,cfg_scale=0.,remasking='low_confidence')
                 else:
                     raise NotImplementedError(f"Mode {mode} not implemented.")
                 #解码出为str
@@ -133,7 +139,10 @@ def main(args):
     iscot=args.iscot
     thread = args.thread
     upperbound=args.upperbound#这里开始看看是否计算的是upperbound
-    
+    lambd=args.lambd
+    alpha=args.alpha
+    baseline_name=args.baseline_name
+    num=args.num
     # 检查是否使用 Accelerate（通过环境变量判断是否通过 accelerate launch 启动）
     accelerator = None
     if ACCELERATE_AVAILABLE:
@@ -305,7 +314,7 @@ def main(args):
                     correct_letters.append(correct_letter)
                 else:
                     #暂时先不考虑其他的,我想先使用thread看看效果
-                    answer=generate(model,tokenizer,input,task,steps,gen_length,block_length,temperature,mode,situation,query_position,nshot,iscot,thread)
+                    answer=generate(model,tokenizer,input,task,steps,gen_length,block_length,temperature,mode,situation,query_position,nshot,iscot,thread,lambd=lambd,alpha=alpha,baseline_name=baseline_name,num=num)
                 #最后的result应该是一个list,包含所有的回答
                 #results可能是list[str]或者list[list[str]],如果是list[list[str]],第一个list是个数,第二个list是位置
                 results.append(answer)
@@ -376,6 +385,10 @@ if __name__=='__main__':
     parser.add_argument('--iscot',type=bool,default=False)
     parser.add_argument('--thread', type=float, default=0.9)
     parser.add_argument('--upperbound', action='store_true', default=False, help='Calculate upperbound accuracy')
+    parser.add_argument('--lambd',type=float,default=1)
+    parser.add_argument('--alpha',type=float,default=1)
+    parser.add_argument('--baseline_name',type=str,default='../data/baseline/reference_corpus.json')
+    parser.add_argument('--num',type=int,default=None)
     args=parser.parse_args()
     
     # 使用 try-finally 确保在程序退出前清理分布式进程组

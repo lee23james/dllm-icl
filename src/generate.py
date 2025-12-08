@@ -52,6 +52,29 @@ def cross_entropy_function(probabilities, labels):
     
     return entropy
 
+def load_baseline(model, baseline_name):
+    global BASE_LINE
+    if BASE_LINE is None:
+        from utils.load_json_or_jsonl import load_json_or_jsonl
+        p_baseline_dict = load_json_or_jsonl(baseline_name)
+        token_num_ = p_baseline_dict['num_token']
+        p_baseline_dict = p_baseline_dict['p_baseline_dict']
+        del_keys = []
+        for key in p_baseline_dict.keys():
+            del_keys.append(key)
+        for key in del_keys:
+            p_baseline_dict[int(key)] = p_baseline_dict[key]
+        for key in del_keys:
+            del p_baseline_dict[key]
+        for key in p_baseline_dict.keys():
+            p_baseline_dict[key] = p_baseline_dict[key] / token_num_
+        BASE_LINE = torch.full((126464,), 1/token_num_, device=model.device, dtype=torch.float32)
+        keys = torch.tensor(list(p_baseline_dict.keys()), device=model.device, dtype=torch.long)
+        values = torch.tensor(list(p_baseline_dict.values()), device=model.device, dtype=torch.float32)
+        BASE_LINE.scatter_(0, keys, values)
+    else:
+        BASE_LINE = BASE_LINE.to(model.device)
+
 def add_gumbel_noise(logits, temperature):
     '''
     The Gumbel max is a method for sampling categorical distributions.
@@ -645,3 +668,288 @@ remasking='low_confidence', mask_id=126336, threshold=None, factor=None):
             if (x[:, prompt.shape[1] + num_block * block_length: prompt.shape[1] + (num_block + 1) * block_length] == mask_id).sum() == 0:
                 break
     return x,nfe
+
+#这个是之前利用当前置信度,取出最高的conf进行综合分数的计算
+@torch.no_grad()
+def generate_with_pc_sampler(model, prompt, steps=128, gen_length=128, block_length=128, lambd=1, alpha=1, baseline_name='P_baseline.json', temperature=0.,
+                  cfg_scale=0., remasking='low_confidence', mask_id=126336, return_order=False):
+    
+    global BASE_LINE
+    if BASE_LINE is None:
+        load_baseline(model, baseline_name)
+    if return_order:
+        orders = {}
+    
+    x = torch.full((1, prompt.shape[1] + gen_length), mask_id, dtype=torch.long).to(model.device)
+    x[:, :prompt.shape[1]] = prompt.clone()
+
+    prompt_index = (x != mask_id)
+
+    assert gen_length % block_length == 0
+    num_blocks = gen_length // block_length
+
+    assert steps % num_blocks == 0
+    steps = steps // num_blocks
+
+    for num_block in range(num_blocks):
+        
+        block_mask_index = (x[:, prompt.shape[1] + num_block * block_length: prompt.shape[1] + (num_block + 1) * block_length:] == mask_id)
+        num_transfer_tokens = get_num_transfer_tokens(block_mask_index, steps)
+        for i in range(steps):
+            mask_index = (x == mask_id)
+            if cfg_scale > 0.:
+                un_x = x.clone()
+                un_x[prompt_index] = mask_id
+                x_ = torch.cat([x, un_x], dim=0)
+                logits = model(x_).logits
+                logits, un_logits = torch.chunk(logits, 2, dim=0)
+                logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
+            else:
+                logits = model(x).logits
+
+            logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
+            x0 = torch.argmax(logits_with_noise, dim=-1) # b, l
+
+            if remasking == 'low_confidence':
+                p = F.softmax(logits, dim=-1)
+                x0_p = torch.squeeze(
+                    torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1) # b, l
+            elif remasking == 'random':
+                x0_p = torch.rand((x0.shape[0], x0.shape[1]), device=x0.device)
+            else:
+                raise NotImplementedError(remasking)
+
+            x0_p[:, prompt.shape[1] + (num_block + 1) * block_length:] = -np.inf
+
+            x0 = torch.where(mask_index, x0, x)
+            
+            x0_p = pc_sampler_function(
+                probabilities=x0_p[:, prompt.shape[1] + num_block * block_length:prompt.shape[1] + (num_block + 1) * block_length],
+                token_ids=x0[:, prompt.shape[1] + num_block * block_length:prompt.shape[1] + (num_block + 1) * block_length],
+                lambda_val=lambd,
+                alpha=alpha,
+                bg_freq_tensor=BASE_LINE
+            )
+            
+            confidence = torch.where(mask_index[:, prompt.shape[1] + num_block * block_length:prompt.shape[1] + (num_block + 1) * block_length], x0_p, -np.inf)
+            transfer_index = torch.zeros_like(x0, dtype=torch.bool, device=x0.device)
+            for j in range(confidence.shape[0]):
+                _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
+                transfer_index[j, select_index+prompt.shape[1]+num_block*block_length] = True
+                if return_order:
+                    if num_block+1 not in orders:
+                        orders[num_block+1] = []
+                    orders[num_block+1].append(select_index.tolist())
+            x[transfer_index] = x0[transfer_index]
+    if return_order:
+        return x, orders
+    return x
+
+
+#这里记录一下pcsampler,同时加上自己的部分,他是根据当前token的置信度进行计算,我现在像的就是,我能不能换一种方式
+def pc_sampler_function(
+    probabilities: torch.Tensor,#每个位置的概率(就是置信度)
+    token_ids: torch.Tensor,
+    lambda_val: float,
+    alpha: float,
+    bg_freq_tensor: torch.Tensor
+) -> torch.Tensor:
+    
+    if probabilities.shape != token_ids.shape:
+        raise f"probabilities.shape: {probabilities.shape}, token_ids.shape: {token_ids.shape} must be equal"
+
+    device = probabilities.device
+    sequence_len = probabilities.shape[1]
+    f_bg_tensor = bg_freq_tensor[token_ids]
+    epsilon = 1e-9
+    cross_entropy_scores = -probabilities * torch.log(f_bg_tensor + epsilon)
+    cross_entropy_scores = torch.clamp(cross_entropy_scores, max=alpha)
+    positions = torch.arange(sequence_len, device=device, dtype=torch.float32)
+    positional_bias = torch.exp(-lambda_val * positions)
+    final_scores = positional_bias * cross_entropy_scores
+
+    return final_scores
+
+#看看效果是不是更加出色,这里对PCsampler进行改进,,计算的是之前的平均置信度的值的高低,进而去判断哪边更好
+#这里我真正想要替换的是conf(在哪里是准确率,但是我想要利用的是平均概率进行计算,而且计算的是之前的平均值)
+#第一个list是步骤,第二个list是所有层数的平均值,所以我现在的想法就是计算看看能不能提点
+#这里处理了维度信息,本质还是取出第一个维度进行计算,因为并没有填充
+def sampler_with_conf(
+    conf: list[torch.Tensor],#这个原来是概率,但是我需要去记录的是之前的平均置信度,这样子比较好改造,这里我想要利用的是整一块的平均置信度进行计算,相当于对他们的结构进行修改
+    token_ids: torch.Tensor,#token id(方便进行学习)
+    lambda_val: float,#调整解码顺序,方便之后进行解码
+    alpha: float,#防止给分到离谱
+    bg_freq_tensor: torch.Tensor#背景频率,方便进行打分
+)->torch.Tensor:#这里得出的应该是综合分数,借此在进行计算
+    """
+    使用历史步骤的置信度累计平均值来计算采样分数
+    
+    Args:
+        conf: 所有历史步骤的置信度列表，每个元素是 [sequence_len] 或 [batch_size, sequence_len] 的 tensor
+        token_ids: 当前步骤的 token id，形状与 conf 中每个元素相同
+        lambda_val: 位置偏置参数
+        alpha: 交叉熵分数的上限
+        bg_freq_tensor: 背景频率 tensor，用于计算交叉熵
+    
+    Returns:
+        final_scores: 综合分数 tensor，形状与 token_ids 相同
+    """
+    if len(conf) == 0:
+        raise ValueError("conf list cannot be empty")
+    
+    # 获取设备信息（从第一个 conf tensor 或 token_ids）
+    device = conf[0].device if isinstance(conf[0], torch.Tensor) else token_ids.device
+    
+    # 确保所有 conf tensor 的形状一致
+    reference_shape = conf[0].shape
+    for i, conf_tensor in enumerate(conf):
+        if conf_tensor.shape != reference_shape:
+            raise ValueError(f"All conf tensors must have the same shape. "
+                           f"conf[0].shape: {reference_shape}, conf[{i}].shape: {conf_tensor.shape}")
+    
+    # 处理 batch 维度
+    # conf_list 中每个元素可能是 [sequence_len] 或 [batch_size, sequence_len]
+    # token_ids 可能是 [sequence_len] 或 [batch_size, sequence_len]
+    has_batch_dim = len(reference_shape) == 2
+    
+    if has_batch_dim:
+        # 如果 conf 有 batch 维度，取第一个样本
+        conf = [c[0] for c in conf]
+        reference_shape = conf[0].shape  # 更新为 [sequence_len]
+    
+    # 处理 token_ids 的 batch 维度
+    if len(token_ids.shape) == 2:
+        # token_ids 有 batch 维度，取第一个样本用于计算
+        token_ids_for_calc = token_ids[0]
+        batch_size = token_ids.shape[0]
+    else:
+        # token_ids 没有 batch 维度
+        token_ids_for_calc = token_ids
+        batch_size = None
+    
+    # 确保 token_ids_for_calc 的形状与处理后的 conf tensor 一致
+    if token_ids_for_calc.shape != reference_shape:
+        raise ValueError(f"token_ids.shape: {token_ids_for_calc.shape} must match conf tensor shape: {reference_shape}")
+    
+    # 将所有历史步骤的 conf 堆叠成一个 tensor
+    # conf[i] 是 [sequence_len]，堆叠后是 [num_steps, sequence_len]
+    conf_stack = torch.stack(conf, dim=0)  # [num_steps, sequence_len]
+    
+    # 计算每个位置在所有历史步骤中的累计平均值
+    # 沿着步骤维度计算平均值
+    avg_conf = torch.mean(conf_stack, dim=0)  # [sequence_len]
+    
+    # 使用累计平均值替换 pc_sampler_function 中的 probabilities
+    # 后续计算逻辑与 pc_sampler_function 相同
+    sequence_len = avg_conf.shape[-1]  # 获取序列长度
+    f_bg_tensor = bg_freq_tensor[token_ids_for_calc]  # [sequence_len]
+    epsilon = 1e-9
+    cross_entropy_scores = -avg_conf * torch.log(f_bg_tensor + epsilon)
+    cross_entropy_scores = torch.clamp(cross_entropy_scores, max=alpha)
+    
+    # 计算位置偏置
+    positions = torch.arange(sequence_len, device=device, dtype=torch.float32)
+    positional_bias = torch.exp(-lambda_val * positions)
+    
+    final_scores = positional_bias * cross_entropy_scores  # [sequence_len]
+    
+    # 如果原始 token_ids 有 batch 维度，需要将结果扩展到 batch 维度
+    if batch_size is not None:
+        # 将 [sequence_len] 扩展为 [batch_size, sequence_len]
+        # 所有 batch 使用相同的分数（因为 conf_list 只记录了第一个样本）
+        final_scores = final_scores.unsqueeze(0).expand(batch_size, -1)  # [batch_size, sequence_len]
+    
+    return final_scores
+
+#利用我修改的代码结构来计算生成的置信度,进而看看结果是否可靠
+#记住prompt刚输入进去就是token id了(因为需要探究的是位置)
+#目前默认gen_length=block_length,之后再进行调整
+@torch.no_grad()
+def generate_with_conf_sampler(model, prompt, gen_start,steps=256, gen_length=256, block_length=256, lambd=1, alpha=1, baseline_name='P_baseline.json', temperature=0.,
+                  cfg_scale=0., remasking='low_confidence', mask_id=126336, return_order=False, num=None):#默认Num=None
+    global BASE_LINE
+    if BASE_LINE is None:
+        load_baseline(model,baseline_name)
+    if return_order:
+        orders={}
+    #这里的x和promot都是token id,不需要进行转换
+    x = prompt.clone().to(model.device)
+    prompt_index=(x!=mask_id)
+    if return_order:
+        orders={}
+    assert gen_length % block_length == 0
+    num_blocks = gen_length // block_length
+    
+    assert steps % num_blocks == 0
+    steps = steps // num_blocks
+    for num_block in range(num_blocks):
+        # 每个 block 开始时重置 conf_list，只记录当前 block 的历史步骤
+        conf_list = []
+        
+        # 修复：使用 gen_start 而不是 prompt.shape[1]
+        block_mask_index = (x[:, gen_start + num_block * block_length: gen_start + (num_block + 1) * block_length] == mask_id)
+        num_transfer_tokens=get_num_transfer_tokens(block_mask_index,steps)
+        for i in range(steps):
+            mask_index=(x==mask_id)
+            if cfg_scale > 0.:
+                un_x = x.clone()
+                un_x[prompt_index] = mask_id
+                x_ = torch.cat([x, un_x], dim=0)
+                logits = model(x_).logits
+                logits, un_logits = torch.chunk(logits, 2, dim=0)
+                logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
+            else:
+                logits = model(x).logits
+            logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
+            x0=torch.argmax(logits_with_noise,dim=-1)#b,l
+
+            if remasking=='low_confidence':
+                p=F.softmax(logits,dim=-1)
+                x0_p=torch.squeeze(
+                    torch.gather(p,dim=-1,index=torch.unsqueeze(x0, -1)), -1)#b,l
+            elif remasking=='random':
+                # 修复：拼写错误 shapr -> shape
+                x0_p=torch.rand((x0.shape[0],x0.shape[1]),device=x0.device)
+            else:
+                raise NotImplementedError(remasking)
+            
+            x0_p[:, gen_start + (num_block + 1) * block_length:] = -np.inf
+            #该mask的地方进行转化
+            x0=torch.where(mask_index,x0,x)
+            # 记录当前步骤的置信度（包含所有位置，包括非 mask 位置）
+            # 虽然记录了所有位置，但最后会通过 mask_index 过滤，只保留 mask 位置的分数
+            conf=x0_p.clone()
+            conf=conf[:,gen_start:gen_start+gen_length]
+            #这里记录每一个步骤的conf[0]
+            conf_list.append(conf[0])
+            #这里已经进行切片处理
+            #根据 num 参数决定使用多少个历史步骤
+            #如果 num=None，使用全部步骤；如果 num 不为 None，使用最近 num 个步骤（不足则取全部）,可以通过参数进行调教
+            if num is None:
+                conf_list_for_sampler = conf_list
+            else:
+                # 取最近 num 个步骤，如果不足 num 个则取全部
+                conf_list_for_sampler = conf_list[-num:] if len(conf_list) > num else conf_list
+            x0_p= sampler_with_conf(
+                conf=conf_list_for_sampler,
+                token_ids=x0[:,gen_start:gen_start+gen_length],
+                lambda_val=lambd,
+                alpha=alpha,
+                bg_freq_tensor=BASE_LINE
+            )
+            confidence=torch.where(mask_index[:,gen_start:gen_start+gen_length],x0_p,-np.inf)
+            transfer_index = torch.zeros_like(x0, dtype=torch.bool, device=x0.device)
+            for j in range(confidence.shape[0]):
+                #当成整片处理,暂时不考虑半自回归形态
+                _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
+                transfer_index[j, select_index+gen_start] = True #这里进行切片处理
+                if return_order:
+                    if num_block+1 not in orders:
+                        orders[num_block+1] = []
+                    orders[num_block+1].append(select_index.tolist())
+            x[transfer_index] = x0[transfer_index]
+    if return_order:
+        return x, orders
+    return x
+
+            
