@@ -9,7 +9,7 @@ project_root = os.path.dirname(scripts_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 from utils.eval_utils import query_extract, load_dataset, eval, group_by_label, corpus_sampling, eval_position
-
+from utils.judge_python_code import evaluate_python_files
 # 检查 accelerate 是否可用
 try:
     import accelerate
@@ -32,7 +32,7 @@ def generate(model,tokenizer,input,task,steps,gen_length,block_length,temperatur
     #我需要去修改内部逻辑,因为原始generate是针对query放在最后的情况,所以并不需要去考虑加mdm_mask,但是目前需要加进去,因为我把query放在中间了
     #修改这个的逻辑,如果是gpqa那么就统一放在一个list依次计算答案即可
     #在gpqa这里,position多少不重要因为都要进行计算(后续如果真的需要再改)
-    if task!='gpqa': 
+    if task!='gpqa':
             # for query_position in nshot:
             #prompts是一个list,包含所有位置的prompt
         #这里要根据nshot和question_query去构造更好的prompt,这里需要定期进行测量和评估
@@ -280,9 +280,10 @@ def main(args):
                 accuracy = eval_position(task, results_by_question, full_dataset)
             print(f"Upperbound Accuracy: {accuracy:.4f}")
 
-
+    #这里也需要对一件生成相应的代码进行适配,我目前就是想看看生成一下结果
     else:
-    #这里要考虑的就是
+    #这里要考虑的就是对于关键代码的适配
+        acc_list=[]
         for query_position in range(nshot+1):
             results=[]
             correct_letters=[]
@@ -355,12 +356,49 @@ def main(args):
                     pass
             
             #根据任务进行评测（只在主进程执行）
-            if accelerator is None or accelerator.is_main_process:
-                if task=='gpqa':
-                    eval(task,results,full_dataset,result_path,args,correct_letters)
-                else:
-                    eval(task,results,full_dataset,result_path,args,position=query_position)
-
+            if task!='mbpp':
+                if accelerator is None or accelerator.is_main_process:
+                    if task=='gpqa':
+                        eval(task,results,full_dataset,result_path,args,correct_letters)
+                    #这里要对整段代码进行适配,特别是对mbpp去进行相应的适配
+                    else:
+                        acc=eval(task,results,full_dataset,result_path,args,position=query_position)
+                        #收集准确率
+                        acc_list.append(acc)
+            else:
+                if accelerator is None or accelerator.is_main_process:
+                    from utils.eval_utils import eval_mbpp
+                    #从args中获取和result_path有关的路径参数来去寻找相应的mbpp生成路径
+                    result_path=getattr(args,'result_path',None)
+                    if result_path is None:
+                        result_path=f'./results/{task}_results'
+                    #根据每一个位置构造对应的文件
+                    eval_mbpp(results,full_dataset,result_path,args,position=query_position)
+    #在这里自动进行评估并计算准确率(求出了各种位置)
+    #这里进行了自动快速评估
+    if task == 'mbpp':
+        #在主进程进行快速评估
+        if accelerator is None or accelerator.is_main_process:
+            result_path=getattr(args,'result_path',None)
+            if result_path is None:
+                result_path=f'./results/{task}_results'
+            #这里只是为了快速测评
+            judge_result=evaluate_python_files(
+                folder_path=result_path,
+                nshot=nshot,
+                steps=steps,
+                gen_length=gen_length,
+                find_not_position=False,
+                iswrite=True,#写下评测结果,之后要记录实验结果
+                output_path=None,
+            )
+            if judge_result and 'Accuracy' in judge_result:
+                acc_list=judge_result['Accuracy']
+                print(f"MBPP Accuracy list: {acc_list}")
+            else:
+                print("Warning: Failed to get MBPP accuracy from judge_python_code")
+        else:
+            acc_list=[]
     # 只在主进程打印完成信息
     if accelerator is None or accelerator.is_main_process:
         print('-------------------Finish----------------')

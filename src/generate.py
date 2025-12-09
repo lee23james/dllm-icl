@@ -671,7 +671,7 @@ remasking='low_confidence', mask_id=126336, threshold=None, factor=None):
 
 #这个是之前利用当前置信度,取出最高的conf进行综合分数的计算
 @torch.no_grad()
-def generate_with_pc_sampler(model, prompt, steps=128, gen_length=128, block_length=128, lambd=1, alpha=1, baseline_name='P_baseline.json', temperature=0.,
+def generate_with_pc_sampler(model, prompt, gen_start,steps=128, gen_length=128, block_length=128, lambd=1, alpha=1, baseline_name='P_baseline.json', temperature=0.,
                   cfg_scale=0., remasking='low_confidence', mask_id=126336, return_order=False):
     
     global BASE_LINE
@@ -680,9 +680,7 @@ def generate_with_pc_sampler(model, prompt, steps=128, gen_length=128, block_len
     if return_order:
         orders = {}
     
-    x = torch.full((1, prompt.shape[1] + gen_length), mask_id, dtype=torch.long).to(model.device)
-    x[:, :prompt.shape[1]] = prompt.clone()
-
+    x=prompt.clone().to(model.device)
     prompt_index = (x != mask_id)
 
     assert gen_length % block_length == 0
@@ -719,23 +717,23 @@ def generate_with_pc_sampler(model, prompt, steps=128, gen_length=128, block_len
             else:
                 raise NotImplementedError(remasking)
 
-            x0_p[:, prompt.shape[1] + (num_block + 1) * block_length:] = -np.inf
+            x0_p[:, gen_start + (num_block + 1) * block_length:] = -np.inf
 
             x0 = torch.where(mask_index, x0, x)
             
             x0_p = pc_sampler_function(
-                probabilities=x0_p[:, prompt.shape[1] + num_block * block_length:prompt.shape[1] + (num_block + 1) * block_length],
-                token_ids=x0[:, prompt.shape[1] + num_block * block_length:prompt.shape[1] + (num_block + 1) * block_length],
+                probabilities=x0_p[:, gen_start:gen_start+gen_length],
+                token_ids=x0[:, gen_start:gen_start+gen_length],
                 lambda_val=lambd,
                 alpha=alpha,
                 bg_freq_tensor=BASE_LINE
             )
             
-            confidence = torch.where(mask_index[:, prompt.shape[1] + num_block * block_length:prompt.shape[1] + (num_block + 1) * block_length], x0_p, -np.inf)
+            confidence = torch.where(mask_index[:, gen_start:gen_start+gen_length], x0_p, -np.inf)
             transfer_index = torch.zeros_like(x0, dtype=torch.bool, device=x0.device)
             for j in range(confidence.shape[0]):
                 _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
-                transfer_index[j, select_index+prompt.shape[1]+num_block*block_length] = True
+                transfer_index[j, select_index+gen_start] = True
                 if return_order:
                     if num_block+1 not in orders:
                         orders[num_block+1] = []

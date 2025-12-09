@@ -407,7 +407,7 @@ echo "--------------------------------测试mbpp数据集-----------------------
 #     --query_position 0  \
 #     --max_samples 500
 
-# # #这个评估代码
+# 这个评估代码
 # python utils/judge_python_code.py\
 #     --folder_path results/mbpp_results_position_0 \
 #     --output_path results/mbpp_results_position_0.txt
