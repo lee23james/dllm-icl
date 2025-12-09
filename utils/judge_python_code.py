@@ -349,11 +349,6 @@ def evaluate_python_files_positions(folder_path, nshot, steps, gen_length):
     return accuracy
 
 
-
-
-
-
-
 #把main上的文件改成了可以通过一次运行实现
 def main():
     parser= argparse.ArgumentParser(description='Run Python files in a folder and save results.')

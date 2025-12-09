@@ -48,31 +48,31 @@ echo "--------------------------------测试gsm8k指令:构造prompt看看不同
 #     --nshot 8 \
 #     --max_samples 200
 echo "--------------------------------eval_conf_base:--------------------------------"
-python scripts/eval.py --task sudoku \
-    --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
-    --device cuda:0 \
-    --gen_length 32 \
-    --steps 32 \
-    --block_length 32 \
-    --temperature 0.0 \
-    --mode original \
-    --data_path ./data/sudoku.csv \
-    --result_path ./results/sudoku_results \
-    --nshot 4 \
-    --max_samples 2
+# python scripts/eval.py --task sudoku \
+#     --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
+#     --device cuda:0 \
+#     --gen_length 32 \
+#     --steps 32 \
+#     --block_length 32 \
+#     --temperature 0.0 \
+#     --mode original \
+#     --data_path ./data/sudoku.csv \
+#     --result_path ./results/sudoku_results \
+#     --nshot 4 \
+#     --max_samples 2
 
-python scripts/eval.py --task sudoku \
-    --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
-    --device cuda:0 \
-    --gen_length 32 \
-    --steps 32 \
-    --block_length 32 \
-    --temperature 0.0 \
-    --mode original \
-    --data_path ./data/sudoku.csv \
-    --result_path ./results/sudoku_results \
-    --nshot 6 \
-    --max_samples 2
+# python scripts/eval.py --task sudoku \
+#     --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
+#     --device cuda:0 \
+#     --gen_length 32 \
+#     --steps 32 \
+#     --block_length 32 \
+#     --temperature 0.0 \
+#     --mode original \
+#     --data_path ./data/sudoku.csv \
+#     --result_path ./results/sudoku_results \
+#     --nshot 6 \
+#     --max_samples 2
 
 # python scripts/eval.py --task sudoku \
 #     --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
@@ -314,18 +314,31 @@ echo "--------------------------------测试countdown指令:构造prompt看看�
 #     --query_position 3 \
 #     --max_samples 500
 
-# python scripts/eval.py --task countdown \
-#     --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
-#     --device cuda:0 \
-#     --gen_length 32 \
-#     --steps 32 \
-#     --block_length 32 \
-#     --temperature 0.0 \
-#     --mode original \
-#     --data_path ./data/countdown.jsonl \
-#     --result_path ./results/countdown_results \
-#     --query_position 3 \
-#     --max_samples 500
+#现在主要就是生成中方法进行评测和探究,目前不再需要位置了,所有位置都要进行探究
+CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
+    --multi_gpu \
+    --num_processes=4 \
+    --num_machines=1 \
+    --mixed_precision=no \
+    --main_process_port=29500 \
+    scripts/eval.py \
+    --task countdown \
+    --model_name /data/share/model_weight/llada/LLaDA-8B-Base \
+    --device cuda:0 \
+    --nshot 4 \
+    --steps 32 \
+    --gen_length 32 \
+    --block_length 32 \
+    --temperature 0.0 \
+    --mode original \
+    --data_path ./data/countdown.jsonl \
+    --result_path ./results/countdown_results \
+    --max_samples 2 \
+    --seed 1234 \
+    --iscot False \
+    --thread 0.9 \
+    --lambd 0.25 \
+    --alpha 10 \
 
 
 

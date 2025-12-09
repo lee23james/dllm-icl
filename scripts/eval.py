@@ -71,6 +71,9 @@ def generate(model,tokenizer,input,task,steps,gen_length,block_length,temperatur
         elif mode=='conf_sampler':
             from src.generate import generate_with_conf_sampler
             out=generate_with_conf_sampler(model,prompt,first_mask_pos,steps,gen_length,block_length,lambd=lambd,alpha=alpha,baseline_name=baseline_name,temperature=temperature,cfg_scale=0.,remasking='low_confidence',num=num)
+        elif mode=='pc_sampler':
+            from src.generate import generate_with_pc_sampler
+            out=generate_with_pc_sampler(model,prompt,first_mask_pos,steps,gen_length,block_length,lambd=lambd,alpha=alpha,baseline_name=baseline_name,temperature=temperature,cfg_scale=0.,remasking='low_confidence')
         else:
             raise NotImplementedError(f"Mode {mode} not implemented.")
 
@@ -283,7 +286,7 @@ def main(args):
     #这里也需要对一件生成相应的代码进行适配,我目前就是想看看生成一下结果
     else:
     #这里要考虑的就是对于关键代码的适配
-        acc_list=[]
+        # acc_list=[]
         for query_position in range(nshot+1):
             results=[]
             correct_letters=[]
@@ -362,9 +365,9 @@ def main(args):
                         eval(task,results,full_dataset,result_path,args,correct_letters)
                     #这里要对整段代码进行适配,特别是对mbpp去进行相应的适配
                     else:
-                        acc=eval(task,results,full_dataset,result_path,args,position=query_position)
+                        eval(task,results,full_dataset,result_path,args,position=query_position)
                         #收集准确率
-                        acc_list.append(acc)
+                        # acc_list.append(acc)
             else:
                 if accelerator is None or accelerator.is_main_process:
                     from utils.eval_utils import eval_mbpp
@@ -383,7 +386,7 @@ def main(args):
             if result_path is None:
                 result_path=f'./results/{task}_results'
             #这里只是为了快速测评
-            judge_result=evaluate_python_files(
+            evaluate_python_files(
                 folder_path=result_path,
                 nshot=nshot,
                 steps=steps,
@@ -392,11 +395,6 @@ def main(args):
                 iswrite=True,#写下评测结果,之后要记录实验结果
                 output_path=None,
             )
-            if judge_result and 'Accuracy' in judge_result:
-                acc_list=judge_result['Accuracy']
-                print(f"MBPP Accuracy list: {acc_list}")
-            else:
-                print("Warning: Failed to get MBPP accuracy from judge_python_code")
         else:
             acc_list=[]
     # 只在主进程打印完成信息
@@ -425,7 +423,7 @@ if __name__=='__main__':
     parser.add_argument('--upperbound', action='store_true', default=False, help='Calculate upperbound accuracy')
     parser.add_argument('--lambd',type=float,default=1)
     parser.add_argument('--alpha',type=float,default=1)
-    parser.add_argument('--baseline_name',type=str,default='../data/baseline/reference_corpus.json')
+    parser.add_argument('--baseline_name',type=str,default='./data/baseline/reference_corpus.json')
     parser.add_argument('--num',type=int,default=None)
     args=parser.parse_args()
     

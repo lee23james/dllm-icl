@@ -72,23 +72,8 @@ def generate_improve(model,tokenizer,input,task,steps,gen_length,block_length,te
             answer_token_positions=find_mbpp_answer_token_positions(x_answer[0],tokenizer)
         else:
             raise NotImplementedError(f"Task {task} not implemented.")
-    # elif mode=='fast_dllm':
-    #     from src.generate import generate_with_fast_dllm
-    #     x,token_change,conf=generate_with_fast_dllm(model,prompt,first_mask_pos,steps,gen_length,block_length,temperature,cfg_scale=0.,remasking='low_confidence',
-    #     return_order=False,return_conf_diff=False,return_entropy=False,return_token_change=True,return_conf=True)
-    #     x_answer=x[:,first_mask_pos:last_mask_pos+1]
-    #     if task=='sudoku':
-    #         answer_token_positions=find_answer_token_positions(x_answer[0],tokenizer,space_id=220,enter_id=198,zero_position_list=zero_position_list)
-    #     elif task=='countdown':
-    #         answer_token_positions=find_countdown_answer_token_positions(x_answer[0],tokenizer,space_id=220,enter_id=198)
-    #     elif task=='gsm8k':
-    #         answer_token_positions=find_gsm8k_answer_token_positions(x_answer[0],tokenizer)
-    #     elif task=='math500':
-    #         answer_token_positions=find_math_answer_token_positions(x_answer[0],tokenizer)
-    #     elif task=='mbpp':
-    #         answer_token_positions=find_mbpp_answer_token_positions(x_answer[0],tokenizer)
-    #     else:
-    #         raise NotImplementedError(f"Task {task} not implemented.")
+    elif mode=='conf_sampler':
+        
     else:
         raise NotImplementedError(f"Mode {mode} not implemented.")
     #这个是后验的阶段
