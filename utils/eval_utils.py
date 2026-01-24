@@ -697,6 +697,7 @@ def normalize_number(s: str) -> str:
 
 #从标准答案,和模型的预测回答中按照1.严格匹配 2.灵活匹配的方式去查看是否正确
 #这里面ground_truth是直接用列表里面的answer字段,然后提取出数字来
+#这里考虑到了度哟中情况,既可以处理###又可以处理###的情况
 def gsm8k_check(model_answer:str,ground_truth:str)->bool:
 
     #现在要从ground_truth中提取数字

@@ -691,7 +691,7 @@ def generate_with_pc_sampler(model, prompt, gen_start,steps=128, gen_length=128,
 
     for num_block in range(num_blocks):
         
-        block_mask_index = (x[:, prompt.shape[1] + num_block * block_length: prompt.shape[1] + (num_block + 1) * block_length:] == mask_id)
+        block_mask_index = (x[:, gen_start + num_block * block_length: gen_start + (num_block + 1) * block_length] == mask_id)
         num_transfer_tokens = get_num_transfer_tokens(block_mask_index, steps)
         for i in range(steps):
             mask_index = (x == mask_id)
