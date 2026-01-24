@@ -1,0 +1,24 @@
+# 阶段2：ICL推理配置
+defaults:
+  - task/gsm8k
+  - dataset/gsm8k
+  - infer_model/llada
+
+# Retriever配置
+retriever:
+  nshot: 4  # few-shot示例数量
+  seed: 42  # 随机种子
+
+# Query位置配置
+query_position: 0  # 0表示最后，nshot表示最前
+
+# 输出配置
+output_dir: "./icl_inference_results"
+max_samples: null  # 限制测试样本数量（null表示全部）
+
+
+
+
+
+
+

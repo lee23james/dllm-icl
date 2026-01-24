@@ -1,0 +1,19 @@
+# LLaDA模型推理配置
+mask_id: 126336  # mask token的ID
+mask_length: 256  # mask token长度
+
+# 生成参数
+generation_kwargs:
+  steps: 256  # 采样步数
+  gen_length: 256  # 生成长度
+  block_length: 256  # 块长度
+  temperature: 0.0  # 温度
+  cfg_scale: 0.0  # CFG scale
+  remasking: "low_confidence"  # 重掩码策略
+
+
+
+
+
+
+

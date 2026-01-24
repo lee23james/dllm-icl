@@ -1,0 +1,8 @@
+# GSM8K任务配置
+task_name: "gsm8k"
+split_token: "\n\n"  # ICD之间的分隔符
+
+
+
+
+

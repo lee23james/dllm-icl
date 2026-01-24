@@ -1,0 +1,16 @@
+#暂时先准备这些
+# 阶段1：数据生成配置
+defaults:
+  - task/gsm8k
+  - dataset/gsm8k
+  - sampler/random
+
+# 生成参数
+few_shot_num: 4  # 要选择的ICD数量
+beam_size: 2  # Beam Search的beam大小
+scorer: "infoscore"  # 评分函数
+batch_size: 16  # 批处理大小
+metric: "no_order"  # 插入策略："no_order" 或 "order"
+
+# 输出配置
+output_dir: "./generated_icd_data"

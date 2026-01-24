@@ -39,3 +39,19 @@ conf_results/
 results/
 rollout_results/
 heatmap_results/
+
+# ICL system generated files
+generated_icd_data/
+icl_inference_results/
+sampler_cache/
+*.parquet
+
+# Model weights (if any)
+*.bin
+*.safetensors
+model_weight/
+model_weights/
+
+# Hydra outputs
+outputs/
+.multirun/
