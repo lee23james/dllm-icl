@@ -106,20 +106,71 @@ class BaseInterface(ABC):
         decoded = self.tokenizer.decode(output[0], skip_special_tokens=skip_special_tokens)
         return decoded
     
-    # def extract_answer(self, generated_text: str) -> str:
-    #     """
-    #     从生成的文本中提取答案（子类可以重写）
-        
-    #     Args:
-    #         generated_text: 生成的文本
-        
-    #     Returns:
-    #         提取的答案
-    #     """
-    #     # 默认实现：尝试从<answer>标签中提取
-    #     import re
-    #     match = re.search(r'<answer>(.*?)</answer>', generated_text, re.DOTALL)
-    #     if match:
-    #         return match.group(1).strip()
-    #     return generated_text.strip()
+    # 每个模型的置信度/对数似然计算都可能不同：由子类实现
+    @abstractmethod
+    def compute_confidence(
+        self,
+        prompt: torch.Tensor,
+        mask_positions: Optional[torch.Tensor] = None,
+        method: str = "margin",
+    ) -> torch.Tensor:
+        """
+        计算 prompt 的“置信度”分数（用于 InfoScore 等）。
+        注意：不同模型的定义/实现可能不同，因此在基类中只定义接口。
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def compute_log_likelihood(
+        self,
+        prompt_left: torch.Tensor,
+        answer: torch.Tensor,
+        prompt_right: Optional[torch.Tensor] = None,
+        mc_num: int = 128,
+        batch_size: int = 1,
+        cfg_scale: float = 0.0,
+    ) -> float:
+        """
+        计算 log P(answer | prompt_left, prompt_right)（用于 MC 估计）。
+        注意：不同模型的实现可能不同，因此在基类中只定义接口。
+        """
+        raise NotImplementedError
+
+    def extract_answer(self, generated_text: str) -> str:
+        """
+        从生成的文本中提取答案（子类可以根据具体任务重写）
+
+        默认实现与 GSM8K 评估逻辑保持一致，大致步骤：
+        1. 优先匹配 "The answer is X"
+        2. 其次匹配 "#### X"
+        3. 再尝试从 <answer>...</answer> 标签内提取
+        4. 若都失败，则返回整段文本（去掉首尾空格）
+
+        Args:
+            generated_text: 生成的文本
+
+        Returns:
+            提取出的“答案”字符串（通常为一个数值的字符串）
+        """
+        import re
+
+        text = generated_text if isinstance(generated_text, str) else str(generated_text)
+
+        # 方法1: 严格匹配 "The answer is X"
+        strict_match = re.search(r"The answer is (\-?[0-9\.\,]+)", text)
+        if strict_match:
+            return strict_match.group(1)
+
+        # 方法2: 灵活匹配 "#### X"
+        flexible_match = re.search(r"#### (\-?[0-9\.\,]+)", text)
+        if flexible_match:
+            return flexible_match.group(1)
+
+        # 方法3: 从 <answer>...</answer> 标签中提取
+        answer_match = re.search(r"<answer>(.*?)</answer>", text, re.DOTALL)
+        if answer_match:
+            return answer_match.group(1).strip()
+
+        # 如果都没找到，退化为返回原始文本
+        return text.strip()
 

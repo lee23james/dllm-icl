@@ -52,7 +52,7 @@ def find_query_position(id_seq: List[int], candidateidx2data: Dict) -> int:
 
 def get_insert_positions(id_seq: List[int], query_pos: int, metric: str) -> List[int]:
     """
-    根据metric参数获取所有可能的插入位置
+    根据metric参数获取所有可能的插入位置（反向语义）
     
     Args:
         id_seq: 当前序列
@@ -60,22 +60,28 @@ def get_insert_positions(id_seq: List[int], query_pos: int, metric: str) -> List
         metric: "no_order" 或 "order"
     
     Returns:
-        所有可能的插入位置列表
+        所有可能的插入位置列表（反向语义）
+        - position=0: 插入到序列末尾
+        - position=k: 插入到倒数第 k+1 个位置
+        
+    注意：返回的 position 使用反向语义，会传递给 utils.get_info_score
+          在 get_info_score 中会转换为实际插入位置：
+          insert_pos = len(seq) - position
     """
     if metric == "no_order":
-        # 只在两侧插入：query之前（最左侧）或query之后（最右侧）
+        # 只在两侧插入：末尾（position=0）或开头（position=len(seq)）
         positions = []
-        # query之前的位置（最左侧）
+        # position=0 表示插入到末尾
         positions.append(0)
-        # query之后的位置（最右侧）
+        # position=len(id_seq) 表示插入到开头
         if len(id_seq) > 0:
             positions.append(len(id_seq))
         # 去重并排序
         return sorted(list(set(positions)))
     elif metric == "order":
         # 在所有可能位置插入：包括中间和两侧
-        # 可以插入的位置：0, 1, 2, ..., len(id_seq)
-        # 这意味着可以在任意两个元素之间插入，包括最前面和最后面
+        # position=0 表示末尾，position=len(id_seq) 表示开头
+        # 返回：[0, 1, 2, ..., len(id_seq)]
         return list(range(len(id_seq) + 1))
     else:
         raise ValueError(f"Unknown metric: {metric}. Must be 'no_order' or 'order'")
@@ -215,13 +221,28 @@ def generate_single_sample_icd(
                     topk_scores = topk_scores.tolist()
                     
                     # 根据索引找到对应的(候选ID, 插入位置)组合，并构建新序列
-                    #这个idx对应的应该是candidate_position_pairs,不是真实idx
+                    # 这里的第二个元素是 position（反向语义），不是直接用于 list.insert 的真实下标
                     for idx, score in zip(indices, topk_scores):
-                        #把(候选ID,插入位置)转化为以一种统一的尺度进行衡量
-                        candidate_idx, insert_pos = candidate_position_pairs[idx]
+                        # 取出(候选ID, 反向位置)
+                        candidate_idx, position = candidate_position_pairs[idx]
                         # 构建新的序列,并进行插入
                         new_seq_ids = test_data_id_seq.copy()
-                        new_seq_ids.insert(insert_pos, candidate_idx)
+                        # ================================
+                        # 统一使用“反向语义”的插入位置：
+                        # position=0   -> 插入到序列末尾（最远）
+                        # position=1   -> 插入到倒数第二个位置
+                        # position=k   -> 插入到倒数第 k+1 个位置
+                        #
+                        # 真实插入下标：real_insert_pos = len(seq) - position
+                        # 与 utils.get_info_score 中完全保持一致，避免打分时和最终序列顺序不一致
+                        # ================================
+                        real_insert_pos = len(new_seq_ids) - position
+                        # 边界保护
+                        if real_insert_pos < 0:
+                            real_insert_pos = 0
+                        elif real_insert_pos > len(new_seq_ids):
+                            real_insert_pos = len(new_seq_ids)
+                        new_seq_ids.insert(real_insert_pos, candidate_idx)
                         # 分数和序列一一对应
                         new_test_data_id_list.append(new_seq_ids)
                         new_test_score_list.append(score)

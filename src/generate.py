@@ -949,5 +949,3 @@ def generate_with_conf_sampler(model, prompt, gen_start,steps=256, gen_length=25
     if return_order:
         return x, orders
     return x
-
-            
