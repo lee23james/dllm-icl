@@ -44,10 +44,12 @@ def main(cfg: DictConfig):
         train_ds = load_gsm8k_ds(
             version=cfg.dataset.version,
             data_path=cfg.dataset.train_path,
+            split="train",
         )
         test_ds = load_gsm8k_ds(
             version=cfg.dataset.version,
             data_path=cfg.dataset.test_path,
+            split="validation",  # 注意：test数据可能存储在validation split中
         )
     else:
         raise ValueError(f"Unsupported task: {cfg.task.task_name}")
@@ -57,12 +59,47 @@ def main(cfg: DictConfig):
     
     # 2. 初始化模型和tokenizer
     logger.info("Initializing model and tokenizer...")
-    # TODO: 根据实际模型路径初始化
-    model = None
-    tokenizer = None
-    
-    if model is None or tokenizer is None:
-        logger.error("Model and tokenizer not initialized. Please implement model loading.")
+    try:
+        import torch
+        from transformers import AutoTokenizer
+        from model.modeling_llada import LLaDAModelLM
+        
+        # 获取模型路径
+        model_path = cfg.infer_model.get("model_path", None)
+        if model_path is None:
+            model_path = cfg.infer_model.get("model_name", None)
+        
+        if model_path is None:
+            raise ValueError(
+                "Model path not found in config. Please set infer_model.model_path or infer_model.model_name"
+            )
+        
+        logger.info(f"Loading model from {model_path}...")
+        
+        # 准备模型参数
+        model_kwargs = {
+            "trust_remote_code": cfg.infer_model.get("trust_remote_code", True),
+            "torch_dtype": getattr(torch, cfg.infer_model.get("torch_dtype", "bfloat16")),
+            "local_files_only": cfg.infer_model.get("local_files_only", True),
+        }
+        
+        # 加载模型
+        model = LLaDAModelLM.from_pretrained(model_path, **model_kwargs)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model.to(device)
+        model.eval()
+        
+        # 加载tokenizer
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_path,
+            trust_remote_code=model_kwargs["trust_remote_code"],
+            local_files_only=model_kwargs["local_files_only"],
+        )
+        
+        logger.info("Model and tokenizer loaded successfully")
+    except Exception as e:
+        logger.error(f"Failed to load model: {e}")
+        logger.error("Please check your model_path configuration in configs/infer_model/llada.yaml")
         return
     
     # 3. 初始化retriever

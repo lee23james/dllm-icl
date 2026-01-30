@@ -173,4 +173,3 @@ class BaseInterface(ABC):
 
         # 如果都没找到，退化为返回原始文本
         return text.strip()
-

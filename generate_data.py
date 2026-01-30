@@ -10,23 +10,16 @@ from omegaconf import DictConfig
 
 #这里开始去寻找适配每一个问题的候选数据集
 from lever_lm.utils import beam_filter
-#在这里实现info_score
-# 导入评分函数（用户自己实现）
-# 注意：get_info_score需要用户自己实现，这里只是占位
+# 导入InfoScore评分函数（已在utils.py中实现）
 try:
     from utils import get_info_score
-except ImportError:
-    try:
-        from lever_lm.utils import get_info_score
-    except ImportError:
-        # 临时占位：返回随机分数（用户需要实现真实的get_info_score）
-        #这里有很严中的问题,我并有写的是getinfo的函数
-        def get_info_score(*args, **kwargs):
-            import torch
-            candidate_data_list = kwargs.get("candidate_data_list", [])
-            num = len(candidate_data_list) if candidate_data_list else 1
-            logger.warning(f"Using placeholder get_info_score, returning random scores for {num} candidates")
-            return torch.randn(num, dtype=torch.float32)
+except ImportError as e:
+    logger.error(f"Failed to import get_info_score from utils: {e}")
+    logger.error("Please ensure utils.py exists and contains get_info_score function")
+    raise ImportError(
+        "get_info_score not found. Please ensure utils.py exists in the project root "
+        "and contains the get_info_score function implementation."
+    ) from e
 
 
 def find_query_position(id_seq: List[int], candidateidx2data: Dict) -> int:
@@ -50,7 +43,7 @@ def find_query_position(id_seq: List[int], candidateidx2data: Dict) -> int:
     return -1
 
 
-def get_insert_positions(id_seq: List[int], query_pos: int, metric: str) -> List[int]:
+def get_insert_positions(id_seq: List[int], metric: str) -> List[int]:
     """
     根据metric参数获取所有可能的插入位置（反向语义）
     
@@ -89,7 +82,7 @@ def get_insert_positions(id_seq: List[int], query_pos: int, metric: str) -> List
 #这个是为每一个test的例子从candidate集合中选择合适的ICD,构建出序列,并进行分数计算
 @torch.inference_mode()
 def generate_single_sample_icd(
-    interface,  # BaseInterface类型，用于计算分数
+    interface,  # BaseInterface类型，用于计算分数(base用上的模型的父类型)
     test_data: Dict,  # 这个后期一定要进行标注,标出这个是否是query
     cfg: DictConfig,
     candidate_set: Dataset,
@@ -149,7 +142,8 @@ def generate_single_sample_icd(
                 continue
             
             # 根据metric获取所有可能的插入位置,返回的是插入的位置,注意这里0是开头len()是结尾
-            insert_positions = get_insert_positions(test_data_id_seq, query_pos, metric)
+            # 注意：get_insert_positions不再需要query_pos参数，因为插入位置是基于序列长度计算的
+            insert_positions = get_insert_positions(test_data_id_seq, metric)
             
             # 构建当前已选好的ICD+测试样本的序列（用于计算分数）
             # 当前的candidateidx2data包括query和所有候选ICD,test_data_id_seq只有当前的ICD和query,还没加新ICD
@@ -248,7 +242,7 @@ def generate_single_sample_icd(
                         new_test_score_list.append(score)
                         
                 else:
-                    raise ValueError(f"Unknown scorer: {cfg.scorer}. Must be 'infoscore' or 'cider'")
+                    raise ValueError(f"Unknown scorer: {cfg.scorer}. Only 'infoscore' is supported.")
                     
             except Exception as e:
                 logger.error(f"Error computing scores: {e}")

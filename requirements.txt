@@ -20,6 +20,16 @@ seaborn>=0.12.0
 pyyaml>=6.0
 easydict>=1.10
 
+# Hydra configuration management (required for generate_data_main.py)
+hydra-core>=1.3.0
+omegaconf>=2.3.0
+
+# Datasets and data processing
+datasets>=2.0.0
+
+# Logging
+loguru>=0.7.0
+
 # Transformers dependencies (usually installed automatically)
 # safetensors>=0.3.0  # For faster model loading
 # tokenizers>=0.13.0   # For tokenization

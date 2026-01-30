@@ -39,3 +39,30 @@ conf_results/
 results/
 rollout_results/
 heatmap_results/
+
+# Generated data and cache
+generated_icd_data/
+cache/
+outputs/
+sub_proc_data/
+
+# Temporary log files
+/tmp/*.log
+*.log
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

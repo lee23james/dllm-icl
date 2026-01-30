@@ -1,6 +1,6 @@
 import json
 import os
-from typing import List
+from typing import List, Tuple
 
 import faiss
 import more_itertools
@@ -14,6 +14,41 @@ from transformers import (
 )
 #专门针对数据处理进行
 #这里应该有模型适配,但是我目前还没开始做(等之后要用到我就开始进行适配)
+
+
+def beam_filter(score_list: List[float], id_list: List[List[int]], beam_size: int) -> Tuple[List[float], List[List[int]]]:
+    """
+    Beam filter：保留top beam_size个序列
+    
+    Args:
+        score_list: 分数列表
+        id_list: 序列ID列表（每个元素是一个序列的ID列表）
+        beam_size: 要保留的序列数量
+    
+    Returns:
+        (filtered_score_list, filtered_id_list): 过滤后的分数和序列列表
+    """
+    if len(score_list) == 0:
+        return [], []
+    
+    if len(score_list) != len(id_list):
+        logger.warning(f"Score list length ({len(score_list)}) != id list length ({len(id_list)}), using min length")
+        min_len = min(len(score_list), len(id_list))
+        score_list = score_list[:min_len]
+        id_list = id_list[:min_len]
+    
+    # 按分数排序（降序）
+    paired = list(zip(score_list, id_list))
+    paired.sort(key=lambda x: x[0], reverse=True)
+    
+    # 保留top beam_size个
+    filtered_paired = paired[:beam_size]
+    
+    # 解包
+    filtered_score_list = [score for score, _ in filtered_paired]
+    filtered_id_list = [id_seq for _, id_seq in filtered_paired]
+    
+    return filtered_score_list, filtered_id_list
 
 
 #这段代码有问题,因为它的query默认是放在最后一位的,如果之后我要训练,那么我应该进行区分

@@ -26,7 +26,7 @@ if project_root not in sys.path:
 from generate_data import generate_single_sample_icd
 from lever_lm.load_ds_utils import load_gsm8k_ds
 from lever_lm.candidate_sampler.random_sampler import RandSampler
-
+from utils import load_ds
 
 def generate_icd_for_all_anchors(
     train_ds: Dataset,
@@ -97,26 +97,67 @@ def init_interface(cfg: DictConfig, device: str):
     初始化interface（用于计算InfoScore）
     
     Args:
-        cfg: 配置对象
+        cfg: 配置对象，需要包含 infer_model.model_path 等配置
         device: 设备字符串（如 "cuda:0"）
     
     Returns:
         interface对象
     """
-    # TODO: 用户自己实现interface的初始化
-    # 示例：
-    # from open_mmicl.interface import LLaDAInterface
-    # model = ...  # 加载模型
-    # tokenizer = ...  # 加载tokenizer
-    # interface = LLaDAInterface(
-    #     model=model,
-    #     tokenizer=tokenizer,
-    #     task=cfg.task.task_name,
-    #     mask_id=cfg.get("mask_id", 126336),
-    #     mask_length=cfg.get("mask_length", 256),
-    # )
-    # return interface
-    raise NotImplementedError("Please implement init_interface function")
+    import torch
+    from transformers import AutoTokenizer
+    from model.modeling_llada import LLaDAModelLM
+    from open_mmicl.interface import LLaDAInterface
+    
+    # 获取模型路径（优先从 infer_model.model_path，其次从 infer_model.model_name）
+    model_path = cfg.infer_model.get("model_path", None)
+    if model_path is None:
+        model_path = cfg.infer_model.get("model_name", None)
+    
+    if model_path is None:
+        raise ValueError(
+            "Model path not found in config. Please set infer_model.model_path or infer_model.model_name"
+        )
+    
+    logger.info(f"Loading LLaDA model from {model_path} on {device}...")
+    
+    # 设置设备
+    torch_device = torch.device(device if torch.cuda.is_available() else "cpu")
+    
+    # 准备模型参数
+    model_kwargs = {
+        "trust_remote_code": cfg.infer_model.get("trust_remote_code", True),
+        "torch_dtype": getattr(torch, cfg.infer_model.get("torch_dtype", "bfloat16")),
+        "local_files_only": cfg.infer_model.get("local_files_only", True),
+    }
+    
+    # 加载模型
+    model = LLaDAModelLM.from_pretrained(
+        model_path,
+        **model_kwargs,
+    )
+    model.to(torch_device)
+    model.eval()  # 设置为评估模式
+    
+    # 加载tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_path,
+        trust_remote_code=model_kwargs["trust_remote_code"],
+        local_files_only=model_kwargs["local_files_only"],
+    )
+    
+    logger.info(f"Model loaded successfully on {device}")
+    
+    # 创建interface
+    interface = LLaDAInterface(
+        model=model,
+        tokenizer=tokenizer,
+        task=cfg.task.task_name,
+        mask_id=cfg.infer_model.get("mask_id", 126336),
+        mask_length=cfg.infer_model.get("mask_length", 256),
+        split_token=cfg.task.get("split_token", "\n\n"),
+    )
+    
+    return interface
 
 
 def gen_data(
@@ -151,14 +192,12 @@ def gen_data(
 
     # load several models will cost large memory at the same time.
     # use sleep to load one by one.
-    #这里的padding逻辑出现了严重问题,如果需要支持padding ,需要从头去修改llada的架构逻辑,不能只是单纯的从文件夹里面抄模型
+    # 注意：单batch模式下不需要padding，所以不需要设置padding_side
+    # 这里的padding逻辑出现了严重问题,如果需要支持padding ,需要从头去修改llada的架构逻辑,不能只是单纯的从文件夹里面抄模型
     #===========================================
     sleep(cfg.sleep_time * rank)
     interface = init_interface(cfg, device=process_device)
-    if cfg.scorer == "infoscore":
-        interface.tokenizer.padding_side = "right"
-    elif cfg.scorer == "cider":
-        interface.tokenizer.padding_side = "left"
+    # 单batch模式：不需要设置padding_side，因为不需要padding
     #===========================================
 
     final_res = {}
@@ -186,6 +225,11 @@ def gen_data(
             ncols=100,
         ),
     ):
+        # 确保test_data有isquery标记
+        if "isquery" not in test_data or test_data.get("isquery", 0) != 1:
+            test_data = test_data.copy()
+            test_data["isquery"] = 1
+        
         # 获取当前anchor对应的候选集索引列表
         # subset已经是从len(final_res)开始的，所以需要加上len(final_res)来索引sub_cand_set_idx
         candidate_indices = sub_cand_set_idx[len(final_res) + i]
@@ -208,39 +252,71 @@ def gen_data(
     return
 
 
-@hydra.main(version_base=None, config_path="configs", config_name="generate_data")
-def main(cfg: DictConfig):
+def _main_impl(cfg: DictConfig):
     """
-    主函数：生成ICD序列数据
+    主函数实现：生成ICD序列数据
     """
     logger.info("="*80)
     logger.info("Stage 1: Data Generation")
     logger.info("="*80)
     
-    # 1. 加载数据集
-    #加载数据
-    logger.info("Loading datasets...")
-    if cfg.task.task_name == "gsm8k":
-        train_ds = load_gsm8k_ds(
-            version=cfg.dataset.version,
-            data_path=cfg.dataset.train_path,
-        )
-    else:
-        raise ValueError(f"Unsupported task: {cfg.task.task_name}")
+    # 创建必要的目录
+    result_dir = cfg.get("result_dir", cfg.get("output_dir", "./generated_icd_data"))
+    if not os.path.exists(result_dir):
+        os.makedirs(result_dir)
     
+    cache_dir = cfg.sampler.cache_dir
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+    
+    save_dir = os.path.join(result_dir, "generated_data")
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    
+    sub_proc_save_dir = os.path.join(save_dir, "sub_proc_data")
+    if not os.path.exists(sub_proc_save_dir):
+        os.makedirs(sub_proc_save_dir)
+    
+    # 生成保存文件名（包含更多参数信息）
+    dataset_name = cfg.dataset.get("name", cfg.task.task_name)
+    model_name = cfg.infer_model.get("name", "llada")
+    construct_order = cfg.get("metric", "no_order")
+    sample_num = cfg.sampler.get("anchor_sample_num", cfg.sampler.get("anchor_sample_num", 5000))
+    
+    save_file_name = (
+        f"{cfg.task.task_name}-{dataset_name}-"
+        f"{model_name}-{cfg.sampler.sampler_name}-scorer:{cfg.scorer}-construct_order:{construct_order}-"
+        f"beam_size:{cfg.beam_size}-few_shot:{cfg.few_shot_num}-"
+        f"candidate_num:{cfg.sampler.candidate_num}-sample_num:{sample_num}.json"
+    )
+    
+    sub_save_path = os.path.join(sub_proc_save_dir, save_file_name)
+    save_path = os.path.join(save_dir, save_file_name)
+    
+    # 1. 加载数据集
+    logger.info("Loading datasets...")
+    train_ds = load_ds(cfg, "train")
     logger.info(f"Train dataset size: {len(train_ds)}")
     
     # 2. 使用sampler生成anchor和candidate_set
     logger.info("Sampling anchor set and candidate sets...")
-    sampler = RandSampler(
-        candidate_num=cfg.sampler.candidate_num,
-        sampler_name=cfg.sampler.sampler_name,
-        anchor_sample_num=cfg.sampler.anchor_sample_num,
-        index_ds_len=len(train_ds),
-        dataset_name=cfg.task.task_name,
-        cache_dir=cfg.sampler.cache_dir,
-        overwrite=cfg.sampler.overwrite,
-    )
+    # 尝试使用hydra instantiate，如果不支持则回退到手动实例化
+    try:
+        sampler = hydra.utils.instantiate(cfg.sampler, index_ds_len=len(train_ds), dataset_name=cfg.task.task_name)
+        # 检查返回的是否是可调用对象，如果不是则回退到手动实例化
+        if not callable(sampler) or isinstance(sampler, type(cfg.sampler)):
+            raise ValueError("hydra instantiate returned non-callable object")
+    except Exception as e:
+        logger.warning(f"Failed to instantiate sampler with hydra, using manual instantiation: {e}")
+        sampler = RandSampler(
+            candidate_num=cfg.sampler.candidate_num,
+            sampler_name=cfg.sampler.sampler_name,
+            anchor_sample_num=cfg.sampler.anchor_sample_num,
+            index_ds_len=len(train_ds),
+            dataset_name=cfg.task.task_name,
+            cache_dir=cfg.sampler.cache_dir,
+            overwrite=cfg.sampler.overwrite,
+        )
     
     sampler_result = sampler(train_ds)
     logger.info(f"Anchor set size: {len(sampler_result['anchor_set'])}")
@@ -259,39 +335,30 @@ def main(cfg: DictConfig):
         anchor_set = sampler_result['anchor_set']
         candidate_set_dict = sampler_result['candidate_set']
         
-        anchor_data_list = []
-        candidate_set_idx = []
+        # 使用select方法直接从train_ds中选择anchor数据，并设置isquery标记
+        anchor_data = train_ds.select(sampler_result["anchor_set"])
+        # 为所有anchor数据添加isquery标记
+        def add_isquery(example):
+            example["isquery"] = 1
+            return example
+        anchor_data = anchor_data.map(add_isquery)
         
-        for anchor_idx in anchor_set:
-            # 获取anchor数据
-            anchor_data = train_ds[anchor_idx].copy()
-            anchor_data["isquery"] = 1  # 标记为query
-            anchor_data_list.append(anchor_data)
-            
-            # 获取该anchor对应的候选集索引
-            candidate_indices = candidate_set_dict.get(anchor_idx, [])
-            candidate_set_idx.append(candidate_indices)
-        
-        # 转换为Dataset
-        from datasets import Dataset as HFDataset
-        sample_data = HFDataset.from_list(anchor_data_list)
-        
-        # 准备保存路径
-        output_dir = Path(cfg.get("output_dir", "./generated_icd_data"))
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = str(output_dir / f"{cfg.task.task_name}_icd_results.json")
+        candidate_set_idx = [
+            candidate_set_dict[k] for k in sampler_result["anchor_set"]
+        ]
         
         # 更新cfg以包含gpu_ids和sleep_time
         cfg.gpu_ids = gpu_ids
         cfg.sleep_time = sleep_time
         
         # 使用torch.multiprocessing启动多进程
+        # 注意：参考代码使用spawn函数，这里使用mp.Process
         mp.set_start_method('spawn', force=True)
         processes = []
         for rank in range(len(gpu_ids)):
             p = mp.Process(
                 target=gen_data,
-                args=(rank, cfg, sample_data, train_ds, candidate_set_idx, output_path)
+                args=(rank, cfg, anchor_data, train_ds, candidate_set_idx, sub_save_path)
             )
             p.start()
             processes.append(p)
@@ -300,44 +367,49 @@ def main(cfg: DictConfig):
         for p in processes:
             p.join()
         
-        logger.info("All processes completed. Results saved to separate files per rank.")
-        logger.info(f"Check files matching pattern: {cfg.task.task_name}_icd_results_rank:*.json")
+        logger.info("All processes completed. Merging results from all ranks...")
         
-        # 可选：合并所有rank的结果
-        if cfg.get("merge_results", False):
-            logger.info("Merging results from all ranks...")
-            all_results = {}
-            for rank in range(len(gpu_ids)):
-                sub_res_basename = (
-                    os.path.basename(output_path).split(".")[0]
-                    + f"_rank:{rank}_*.json"
-                )
-                import glob
-                pattern = output_path.replace(os.path.basename(output_path), sub_res_basename)
-                files = glob.glob(pattern)
-                for f in files:
-                    with open(f, 'r') as file:
-                        all_results.update(json.load(file))
-            
-            merged_path = output_dir / f"{cfg.task.task_name}_icd_results_merged.json"
-            with open(merged_path, 'w', encoding='utf-8') as f:
-                json.dump(all_results, f, ensure_ascii=False, indent=2)
-            logger.info(f"Merged results saved to: {merged_path}")
-            return all_results
+        # 合并所有rank的结果（参考代码的逻辑）
+        world_size = len(gpu_ids)
+        subset_size = len(anchor_data) // world_size
+        total_data = {}
+        for rank in range(world_size):
+            subset_start = rank * subset_size
+            subset_end = (
+                subset_start + subset_size if rank != world_size - 1 else len(anchor_data)
+            )
+            sub_res_basename = (
+                os.path.basename(save_path).split(".")[0]
+                + f"_rank:{rank}_({subset_start}, {subset_end}).json"
+            )
+            rank_save_path = sub_save_path.replace(
+                os.path.basename(sub_save_path), sub_res_basename
+            )
+            if os.path.exists(rank_save_path):
+                with open(rank_save_path, "r") as f:
+                    data = json.load(f)
+                logger.info(f"Load data from {rank_save_path}, data length: {len(data)}")
+                total_data.update(data)
         
-        return None
+        # 保存最终结果
+        with open(save_path, "w") as f:
+            json.dump(total_data, f, ensure_ascii=False, indent=2)
+        logger.info(f"Save final data to {save_path}")
+        
+        return total_data
     else:
         # 单卡模式：使用原有的generate_icd_for_all_anchors
         logger.info("Using single-GPU mode")
         
         # 初始化interface（用于计算InfoScore）
-        # TODO: 用户自己实现interface的初始化
-        interface = None
-        if interface is None:
-            logger.warning("Interface not initialized. InfoScore calculation will be skipped.")
-            logger.warning("Please implement interface initialization in generate_data_main.py")
-            # 临时：返回空结果
-            logger.info("Skipping ICD generation (interface not implemented)")
+        try:
+            device = f"cuda:{cfg.gpu_ids[0]}" if cfg.get("gpu_ids") and len(cfg.gpu_ids) > 0 else "cuda:0"
+            interface = init_interface(cfg, device=device)
+            # 单batch模式：不需要设置padding_side，因为不需要padding
+            logger.info(f"Interface initialized on {device}")
+        except Exception as e:
+            logger.error(f"Failed to initialize interface: {e}")
+            logger.error("Please check your model_path configuration in configs/infer_model/llada.yaml")
             return
         
         # 为每个anchor生成最优ICD序列
@@ -350,14 +422,10 @@ def main(cfg: DictConfig):
         )
         
         # 保存结果
-        output_dir = Path(cfg.get("output_dir", "./generated_icd_data"))
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        output_path = output_dir / f"{cfg.task.task_name}_icd_results.json"
-        with open(output_path, 'w', encoding='utf-8') as f:
+        with open(save_path, 'w', encoding='utf-8') as f:
             json.dump(all_results, f, ensure_ascii=False, indent=2)
         
-        logger.info(f"Results saved to: {output_path}")
+        logger.info(f"Results saved to: {save_path}")
         logger.info(f"Total anchor samples processed: {len(all_results)}")
         
         # 打印统计信息
@@ -367,10 +435,20 @@ def main(cfg: DictConfig):
         return all_results
 
 
+@hydra.main(
+    version_base=None, config_path="./configs", config_name="generate_data.yaml"
+)
+def hydra_loguru_init(cfg: DictConfig) -> None:
+    """Hydra入口函数，初始化loguru日志"""
+    hydra_path = hydra.core.hydra_config.HydraConfig.get().run.dir
+    job_name = hydra.core.hydra_config.HydraConfig.get().job.name
+    logger.remove()
+    logger.add(sys.stderr, level=hydra.core.hydra_config.HydraConfig.get().verbose)
+    logger.add(os.path.join(hydra_path, f"{job_name}.log"))
+    
+    # 调用实际的主函数
+    _main_impl(cfg)
+
+
 if __name__ == "__main__":
-    main()
-
-
-
-
-
+    hydra_loguru_init()

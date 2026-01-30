@@ -15,11 +15,33 @@ from lever_lm.load_ds_utils import load_hf_ds,load_gsm8k_ds
 #cfg是任务配置,方便进行查询
 #
 def load_ds(cfg,split=None):
+    """
+    加载数据集
+    
+    Args:
+        cfg: 配置对象
+        split: 要加载的split名称（如 "train"），如果为None，则根据任务类型决定
+    
+    Returns:
+        加载的数据集
+    """
     if cfg.task.task_name == "gsm8k":
-        ds=load_gsm8k_ds(
+        # 使用方式2：只加载单个split
+        if split == "train":
+            data_path = cfg.dataset.train_path
+        elif split == "test" or split == "validation":
+            data_path = cfg.dataset.get("test_path") or cfg.dataset.get("val_path")
+            if data_path is None:
+                raise ValueError("test_path or val_path must be provided for test/validation split")
+        else:
+            # 默认加载train
+            data_path = cfg.dataset.train_path
+            split = "train"
+        
+        ds = load_gsm8k_ds(
             version=cfg.dataset.version,
-            train_path=cfg.dataset.train_path,
-            val_path=cfg.dataset.val_path
+            data_path=data_path,
+            split=split
         )
     else:
         try:
