@@ -193,6 +193,8 @@ def generate_single_sample_icd(
                         position_list=position_list,  # 所有插入位置列表
                         batch_size=cfg.batch_size,
                         split_token=cfg.task.split_token,
+                        mc_num=cfg.get("mc_num", 128),  # Monte Carlo采样次数，从配置中获取
+                        cfg_scale=cfg.get("cfg_scale", 0.0),  # CFG scale，从配置中获取
                     )
                     
                     # scores应该是一个tensor，shape为(len(candidate_position_pairs),)

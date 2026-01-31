@@ -4,10 +4,3 @@ candidate_num: 64  # 候选集大小
 anchor_sample_num: 5000  # anchor数量
 cache_dir: "./cache/gsm8k"
 overwrite: false  # 是否覆盖缓存
-
-
-
-
-
-
-

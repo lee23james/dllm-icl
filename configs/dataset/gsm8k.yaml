@@ -1,5 +1,5 @@
 # GSM8K数据集配置
 #定义了gsm8k数据集的路径
 version: "local"  # 使用本地数据
-train_path: "/home/share/datasets/train-00000-of-00001.parquet"  # 训练集路径
-test_path: "/home/share/datasets/test-00000-of-00001.parquet"  # 测试集路径（仅icl_inference使用）
+train_path: "/home/share/datasets/gsm8k/train-00000-of-00001.parquet"  # 训练集路径
+test_path: "/home/share/datasets/gsm8k/test-00000-of-00001.parquet"  # 测试集路径（仅icl_inference使用，实际可能是validation split）

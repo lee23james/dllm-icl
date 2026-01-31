@@ -64,10 +64,10 @@ cd "$PROJECT_ROOT" || exit 1
 
 # 小批量测试配置（快速验证）
 SMALL_TEST_CONFIG=(
-    "sampler.anchor_sample_num=20"      # 处理50个test_sample
-    "sampler.candidate_num=20"          # 每个候选池20个ICD
+    "sampler.anchor_sample_num=10"      # 处理50个test_sample
+    "sampler.candidate_num=10"          # 每个候选池20个ICD
     "few_shot_num=4"                    # 选择4个ICD
-    "beam_size=5"                      # beam_size=10
+    "beam_size=3"                      # beam_size=10
     "metric=no_order"                   # 只在两侧插入
     "mc_num=20"                         # Monte Carlo采样次数（加快速度）
     "batch_size=1"                      # 批处理大小

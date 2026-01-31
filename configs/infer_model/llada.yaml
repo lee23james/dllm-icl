@@ -2,11 +2,21 @@
 mask_id: 126336  # mask token的ID
 mask_length: 256  # mask token长度
 
+# 模型路径配置（必需）
+model_path: "/home/share/model_weight/llada/LLaDA-8B-Base/"  # 请修改为实际的模型路径
+# 或者使用 model_name（如果模型在 HuggingFace Hub 上）
+# model_name: "your-org/llada-model"
+
+# 模型加载参数
+trust_remote_code: true  # 是否信任远程代码
+local_files_only: true  # 是否只使用本地文件
+torch_dtype: "bfloat16"  # 模型精度：bfloat16, float16, float32
+
 # 生成参数
 generation_kwargs:
-  steps: 256  # 采样步数
-  gen_length: 256  # 生成长度
-  block_length: 256  # 块长度
+  steps: 128  # 采样步数
+  gen_length: 128  # 生成长度
+  block_length: 128  # 块长度
   temperature: 0.0  # 温度
   cfg_scale: 0.0  # CFG scale
   remasking: "low_confidence"  # 重掩码策略
