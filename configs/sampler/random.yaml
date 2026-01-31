@@ -1,6 +1,7 @@
 # 随机采样器配置
 sampler_name: "random_sampler"
-candidate_num: 64  # 候选集大小
-anchor_sample_num: 5000  # anchor数量
+# 引用父配置 generate_data.yaml 中的参数
+candidate_num: ${candidate_num}  # 候选集大小，从 generate_data.yaml 继承
+anchor_sample_num: ${anchor_sample_num}  # anchor数量，从 generate_data.yaml 继承
 cache_dir: "./cache/gsm8k"
 overwrite: false  # 是否覆盖缓存
