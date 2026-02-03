@@ -104,8 +104,7 @@ def init_interface(cfg: DictConfig, device: str):
         interface对象
     """
     import torch
-    from transformers import AutoTokenizer
-    from model.modeling_llada import LLaDAModelLM
+    from transformers import AutoTokenizer, AutoModel
     from open_mmicl.interface import LLaDAInterface
     
     # 获取模型路径（优先从 infer_model.model_path，其次从 infer_model.model_name）
@@ -119,6 +118,7 @@ def init_interface(cfg: DictConfig, device: str):
         )
     
     logger.info(f"Loading LLaDA model from {model_path} on {device}...")
+    logger.info("Using AutoModel to load from model directory (will use modeling_llada.py from model directory)")
     
     # 设置设备
     torch_device = torch.device(device if torch.cuda.is_available() else "cpu")
@@ -130,8 +130,9 @@ def init_interface(cfg: DictConfig, device: str):
         "local_files_only": cfg.infer_model.get("local_files_only", True),
     }
     
-    # 加载模型
-    model = LLaDAModelLM.from_pretrained(
+    # 使用 AutoModel 从模型目录加载，这样会使用模型目录中的 modeling_llada.py
+    # 而不是项目中的 model/modeling_llada.py
+    model = AutoModel.from_pretrained(
         model_path,
         **model_kwargs,
     )
@@ -383,10 +384,10 @@ def _main_impl(cfg: DictConfig):
             subset_end = (
                 subset_start + subset_size if rank != world_size - 1 else len(anchor_data)
             )
-                sub_res_basename = (
+            sub_res_basename = (
                 os.path.basename(save_path).split(".")[0]
                 + f"_rank:{rank}_({subset_start}, {subset_end}).json"
-                )
+            )
             rank_save_path = sub_save_path.replace(
                 os.path.basename(sub_save_path), sub_res_basename
             )

@@ -11,9 +11,7 @@ few_shot_num: 4  # 要选择的ICD数量
 beam_size: 5  # Beam Search的beam大小
 scorer: "infoscore"  # 评分函数：目前只支持 "infoscore"
 batch_size: 1  # 批处理大小（InfoScore计算时使用，一般设为1）
-metric: "no_order"  # 插入策略："no_order" 或 "ord er"
-candidate_num: 20
-anchor_sample_num: 500
+metric: "no_order"  # 插入策略："no_order" 或 "order"
 device: cuda
 precision: bf16
 
