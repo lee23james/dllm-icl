@@ -23,6 +23,8 @@ class LLaDAInterface(BaseInterface):
         mask_id: int = 126336,
         mask_length: int = 256,
         split_token: str = "\n\n",
+        prompt_template: Optional[str] = None,
+        is_scoring_mode: bool = False,
     ):
         """
         初始化LLaDA接口
@@ -34,10 +36,13 @@ class LLaDAInterface(BaseInterface):
             mask_id: mask token的ID
             mask_length: mask token的长度
             split_token: ICD之间的分隔符
+            prompt_template: prompt模板字符串
+            is_scoring_mode: 是否为打分模式
+                - True: 打分阶段（generate_data），query使用完整answer
+                - False: 推理阶段（evaluation），query使用mask
         """
-        super().__init__(model, tokenizer, task, mask_id, mask_length)
-        self.split_token = split_token
-        # 获取mask token字符串（用于构建prompt）
+        super().__init__(model, tokenizer, task, mask_id, mask_length, prompt_template, split_token, is_scoring_mode)
+        # 获取mask token字符串（用于构建prompt，保持向后兼容）
         try:
             self.mask_token_str = self.tokenizer.decode([self.mask_id])
         except:
@@ -47,7 +52,7 @@ class LLaDAInterface(BaseInterface):
     
     def _format_icd(self, ice: Dict[str, Any]) -> str:
         """
-        格式化单个ICD示例
+        格式化单个ICD示例（使用PromptTemplate）
         
         Args:
             ice: ICD示例字典
@@ -56,51 +61,68 @@ class LLaDAInterface(BaseInterface):
             格式化后的ICD文本
         """
         # 确保不是query（isquery=0）
-        #这里需要统一字符串格式,变成可以统一识别的格式
         if ice.get("isquery", 0) == 1:
             logger.warning("Found query in ice_samples, skipping...")
             return None
         
-        # 获取ICD的文本（根据任务不同，字段可能不同）
-        if "q_a" in ice:
-            # 获取ice的qa版本
-            icd_text = ice["q_a"]
-        elif "question" in ice and "answer" in ice:
-            # 适配GSM8K格式：question + answer,这个后期再改,,目前我想先按这个格式进行生成
-            # 目前其他的问题我都可以按照这种格式生成问题和答案对
-            icd_text = f"question: {ice['question']}\n<answer>\n{ice['answer']}\n</answer>"
+        # 使用PromptTemplate生成ICD
+        if self.pt is not None:
+            return self.pt.generate_ice_item(ice)
         else:
-            raise ValueError(f"Unknown data format for ICD: {ice.keys()}")
-        
-        return icd_text
+            # 向后兼容：如果没有PromptTemplate，使用旧逻辑
+            if "q_a" in ice:
+                return ice["q_a"]
+            elif "question" in ice and "answer" in ice:
+                return f"question: {ice['question']}\n<answer>\n{ice['answer']}\n</answer>"
+            else:
+                raise ValueError(f"Unknown data format for ICD: {ice.keys()}")
     
     #这里取出test对样本并把query部分进行遮盖
-    def _format_query(self, test_sample: Dict[str, Any]) -> str:
+    def _format_query(self, test_sample: Dict[str, Any], use_mask: Optional[bool] = None) -> str:
         """
-        格式化query（需要mask操作）
+        格式化query（使用PromptTemplate）
         
         Args:
             test_sample: 测试样本（query）
+            use_mask: 是否使用mask（None时根据is_scoring_mode自动判断）
+                - None: 根据self.is_scoring_mode自动判断
+                - True: 使用mask（推理阶段）
+                - False: 不使用mask，使用完整answer（打分阶段）
         
         Returns:
-            格式化后的query文本（包含mask token）
+            格式化后的query文本
         """
         # 确保test_sample是query（isquery=1）
         if test_sample.get("isquery", 0) != 1:
             logger.warning("test_sample is not marked as query (isquery=1), but proceeding...")
         
-        if "question" not in test_sample:
-            raise ValueError(f"Unknown data format for query: {test_sample.keys()}")
+        # 确定是否使用mask
+        if use_mask is None:
+            use_mask = not self.is_scoring_mode  # 打分阶段不用mask，推理阶段用mask
         
-        # 构建mask tokens（重复mask_length次）
-        mask_tokens = self.mask_token_str * self.mask_length
-        
-        # 构建query文本，answer部分用mask token替换
-        # GSM8K格式：question + target + mask_tokens
-        #这里采用gsm8k格式,而且我觉得这个格式也可以适用于其他字符串中
-        query_text = f"question: {test_sample['question']}\n<answer>\n{mask_tokens}"
-        
-        return query_text
+        # 使用PromptTemplate生成query
+        if self.pt is not None:
+            return self.pt.generate_query_item(test_sample, use_mask=use_mask)
+        else:
+            # 向后兼容：如果没有PromptTemplate，使用旧逻辑
+            if "question" not in test_sample:
+                raise ValueError(f"Unknown data format for query: {test_sample.keys()}")
+            
+            if use_mask:
+                # 推理阶段：使用mask
+                mask_tokens = self.mask_token_str * self.mask_length
+                query_text = f"question: {test_sample['question']}\n<answer>\n{mask_tokens}"
+            else:
+                # 打分阶段：使用完整answer
+                if "answer" in test_sample:
+                    answer = test_sample["answer"]
+                    query_text = f"question: {test_sample['question']}\n<answer>\n{answer}\n</answer>"
+                elif "q_a" in test_sample:
+                    query_text = test_sample["q_a"]
+                else:
+                    raise ValueError(f"Unknown data format for query in scoring mode: {test_sample.keys()}")
+            
+            return query_text
     
     def build_prompt(
         self,
@@ -396,4 +418,86 @@ class LLaDAInterface(BaseInterface):
         )
         
         return score.item()
+    
+    def transfer_prompts(
+        self,
+        batch_data_sample_list: List[Dict[str, Any]],
+        is_last_for_generation: bool = True,
+        query_label: Optional[str] = None,
+        use_mask: Optional[bool] = None,
+    ) -> List[str]:
+        """
+        批量转换prompt
+        
+        Args:
+            batch_data_sample_list: 批量数据样本列表
+            is_last_for_generation: 是否最后一个用于生成
+            query_label: query标签（可选）
+            use_mask: 是否使用mask（None时根据is_scoring_mode自动判断）
+        
+        Returns:
+            prompt字符串列表
+        """
+        prompts = []
+        for sample in batch_data_sample_list:
+            if sample.get("isquery", 0) == 1:
+                # 如果是query，使用generate_query_item（根据use_mask决定是否mask）
+                prompt = self._format_query(sample, use_mask=use_mask)
+            else:
+                # 如果是ICD，使用generate_ice_item
+                prompt = self._format_icd(sample)
+            prompts.append(prompt)
+        return prompts
+    
+    def concat_prompt(
+        self,
+        ice_data_sample_list: List[Dict[str, Any]],
+        query_sample: Dict[str, Any],
+        query_position: int = 0,
+        use_mask: Optional[bool] = None,
+    ) -> str:
+        """
+        拼接完整prompt（使用PromptTemplate）
+        
+        Args:
+            ice_data_sample_list: ICD数据样本列表
+            query_sample: query样本
+            query_position: query在序列中的位置（0表示最后，len(ice)表示最前）
+            use_mask: 是否使用mask（None时根据is_scoring_mode自动判断）
+        
+        Returns:
+            完整的prompt字符串
+        """
+        if self.pt is None:
+            # 如果没有PromptTemplate，使用旧的build_prompt方法
+            return self.build_prompt(ice_data_sample_list, query_sample, query_position)
+        
+        # 确定是否使用mask
+        if use_mask is None:
+            use_mask = not self.is_scoring_mode  # 打分阶段不用mask，推理阶段用mask
+        
+        # 使用PromptTemplate生成每个ICD的prompt
+        ice_prompt_list = []
+        for ice_sample in ice_data_sample_list:
+            ice_prompt = self.pt.generate_ice_item(ice_sample)
+            ice_prompt_list.append(ice_prompt.strip())
+        
+        # 生成query的prompt（根据use_mask决定是否mask）
+        query_prompt = self.pt.generate_query_item(query_sample, use_mask=use_mask).strip()
+        
+        # 根据query_position插入query
+        icd_count = len(ice_prompt_list)
+        max_position = icd_count
+        normalized_position = max(0, min(query_position, max_position))
+        # 反向插入：0 -> 末尾，1 -> 倒数第二，...，len -> 开头
+        insertion_idx = icd_count - normalized_position
+        
+        # 拼接prompt
+        prompt_parts = ice_prompt_list[:]
+        prompt_parts.insert(insertion_idx, query_prompt)
+        
+        # 使用split_token连接
+        prompt = self.split_token.join(prompt_parts)
+        
+        return prompt
 

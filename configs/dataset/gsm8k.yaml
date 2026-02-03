@@ -3,3 +3,4 @@
 version: "local"  # 使用本地数据
 train_path: "/home/share/datasets/gsm8k/train-00000-of-00001.parquet"  # 训练集路径
 test_path: "/home/share/datasets/gsm8k/test-00000-of-00001.parquet"  # 测试集路径（仅icl_inference使用，实际可能是validation split）
+template: ${infer_model.prompt_templates.gsm8k_prompt_template}  # 引用infer_model中定义的GSM8K prompt模板 

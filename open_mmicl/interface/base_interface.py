@@ -7,6 +7,8 @@ import torch
 from datasets import Dataset
 from loguru import logger
 
+from ..prompt_template import PromptTemplate
+
 #这里我认为应该要做的就是进行prompt的准备
 #然后由子类变成适合输入模型的prompt
 class BaseInterface(ABC):
@@ -22,6 +24,9 @@ class BaseInterface(ABC):
         task: str,
         mask_id: int = 126336,
         mask_length: int = 256,
+        prompt_template: Optional[str] = None,
+        split_token: str = "\n\n",
+        is_scoring_mode: bool = False,
     ):
         """
         初始化接口
@@ -32,6 +37,11 @@ class BaseInterface(ABC):
             task: 任务名称（如'gsm8k'）
             mask_id: mask token的ID
             mask_length: mask token的长度（用于生成）
+            prompt_template: prompt模板字符串（如 "question: <Q>\n<answer>\n<A>\n</answer>"）
+            split_token: ICD之间的分隔符
+            is_scoring_mode: 是否为打分模式
+                - True: 打分阶段（generate_data），query使用完整answer，不mask
+                - False: 推理阶段（evaluation），query使用mask替换answer
         """
         self.model = model
         self.tokenizer = tokenizer
@@ -39,6 +49,26 @@ class BaseInterface(ABC):
         self.mask_id = mask_id
         self.mask_length = mask_length
         self.device = next(model.parameters()).device if hasattr(model, 'parameters') else torch.device('cuda')
+        self.split_token = split_token
+        self.is_scoring_mode = is_scoring_mode  # 区分打分阶段和推理阶段
+        
+        # 初始化PromptTemplate
+        if prompt_template is not None:
+            # 获取mask token字符串
+            try:
+                mask_token_str = self.tokenizer.decode([self.mask_id])
+            except:
+                mask_token_str = "<|mdm_mask|>"
+                logger.warning(f"Failed to decode mask_id {self.mask_id}, using default: {mask_token_str}")
+            
+            self.pt = PromptTemplate(
+                prompt_template=prompt_template,
+                mask_token_str=mask_token_str,
+                mask_length=mask_length,
+            )
+        else:
+            self.pt = None
+            logger.warning("prompt_template is None, PromptTemplate not initialized")
     
     @abstractmethod
     def build_prompt(
@@ -173,3 +203,51 @@ class BaseInterface(ABC):
 
         # 如果都没找到，退化为返回原始文本
         return text.strip()
+    
+    def transfer_prompts(
+        self,
+        batch_data_sample_list: List[Dict[str, Any]],
+        is_last_for_generation: bool = True,
+        query_label: Optional[str] = None,
+        use_mask: Optional[bool] = None,
+    ) -> List[str]:
+        """
+        批量转换prompt（抽象方法，子类需要实现）
+        
+        Args:
+            batch_data_sample_list: 批量数据样本列表
+            is_last_for_generation: 是否最后一个用于生成
+            query_label: query标签（可选）
+            use_mask: 是否使用mask（None时根据is_scoring_mode自动判断）
+                - None: 根据self.is_scoring_mode自动判断（False=推理用mask，True=打分不用mask）
+                - True: 强制使用mask（推理阶段）
+                - False: 不使用mask，使用完整answer（打分阶段）
+        
+        Returns:
+            prompt字符串列表
+        """
+        raise NotImplementedError
+    
+    def concat_prompt(
+        self,
+        ice_data_sample_list: List[Dict[str, Any]],
+        query_sample: Dict[str, Any],
+        query_position: int = 0,
+        use_mask: Optional[bool] = None,
+    ) -> str:
+        """
+        拼接完整prompt（抽象方法，子类需要实现）
+        
+        Args:
+            ice_data_sample_list: ICD数据样本列表
+            query_sample: query样本
+            query_position: query在序列中的位置
+            use_mask: 是否使用mask（None时根据is_scoring_mode自动判断）
+                - None: 根据self.is_scoring_mode自动判断（False=推理用mask，True=打分不用mask）
+                - True: 强制使用mask（推理阶段）
+                - False: 不使用mask，使用完整answer（打分阶段）
+        
+        Returns:
+            完整的prompt字符串
+        """
+        raise NotImplementedError

@@ -1,6 +1,7 @@
 # GSM8K任务配置
 task_name: "gsm8k"
 split_token: "\n\n"  # ICD之间的分隔符
+template: ${infer_model.prompt_templates.gsm8k_prompt_template}  # 引用infer_model中定义的GSM8K prompt模板
 
 
 

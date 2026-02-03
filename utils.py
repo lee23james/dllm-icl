@@ -147,70 +147,129 @@ def get_info_score(
     device = interface.device
     sep = split_token if split_token is not None else "\n\n"
 
-    def format_icd(sample: Dict) -> str:
-        """将单个 ICD 样本格式化成统一的文本表示。"""
-        if "q_a" in sample:
-            return sample["q_a"]
-        if "question" in sample and "answer" in sample:
-            return f"question: {sample['question']}\n<answer>\n{sample['answer']}\n</answer>"
-        raise ValueError(f"Unknown ICD format: {sample.keys()}")
+    # 优先使用 Interface 上的 PromptTemplate（统一使用配置中的 prompt_template）
+    pt = getattr(interface, "pt", None)
 
-    def format_query_prefix(query_sample: Dict) -> str:
-        """格式化 query 的 question 部分（不含答案）。"""
-        if "question" in query_sample:
-            return f"question: {query_sample['question']}\n<answer>\n"
-        elif "q_a" in query_sample:
-            # 如果只有 q_a，需要提取 question 部分（这里简化处理，可能需要根据实际情况调整）
-            qa_text = query_sample["q_a"]
-            # 尝试提取 question 部分（假设格式是 "question: ...\n<answer>\n"）
-            if "<answer>" in qa_text:
-                return qa_text.split("<answer>")[0] + "<answer>\n"
-            return qa_text
-        else:
-            raise ValueError(f"Unknown query format: {query_sample.keys()}")
+    if pt is not None:
+        def build_prompt_parts(left_icds: List[Dict], query_sample: Dict, right_icds: List[Dict]) -> Tuple[str, str, Optional[str]]:
+            """
+            使用 PromptTemplate 构建打分用的三个部分：
+            - left_text: left ICD + query 的 question + "<answer>\\n"（不含答案主体）
+            - answer_text: query 的答案文本（位于 <answer> 与 </answer> 之间）
+            - right_text:  "</answer>" + 右侧 ICD（如果有）
 
-    def extract_answer_text(query_sample: Dict) -> str:
-        """从 query 中提取答案文本，优先使用 answer 字段，其次解析 q_a。"""
-        if "answer" in query_sample:
-            return str(query_sample["answer"])
-        if "q_a" in query_sample:
-            qa_text = query_sample["q_a"]
-            if "<answer>" in qa_text and "</answer>" in qa_text:
-                return qa_text.split("<answer>", 1)[1].split("</answer>", 1)[0].strip()
-            if "<answer>" in qa_text:
-                return qa_text.split("<answer>", 1)[1].strip()
-            return qa_text
-        raise ValueError("query_sample must contain 'answer' or 'q_a' to extract answer text")
+            要求 prompt_template 形如：
+                question: <Q>\\n<answer>\\n<A>\\n</answer>
+            """
+            # 1) 使用模板生成左侧 ICD 的完整文本
+            left_icd_texts: List[str] = []
+            for s in left_icds:
+                icd_text = pt.generate_ice_item(s)
+                left_icd_texts.append(icd_text.strip())
 
-    def build_prompt_parts(left_icds: List[Dict], query_sample: Dict, right_icds: List[Dict]) -> Tuple[str, str, Optional[str]]:
-        """
-        根据 left ICD、query、right ICD 构建 prompt 的三个部分：
-        - left_text:  left ICD + query(不含答案) 部分
-        - answer_text:  query 的答案文本
-        - right_text:  right ICD 部分（如果有）
-        """
-        # 格式化 left ICD
-        left_icd_parts = [format_icd(s) for s in left_icds]
-        
-        # query 的 question 部分
-        query_prefix = format_query_prefix(query_sample)
-        
-        # 组合 left 部分
-        left_parts = left_icd_parts + [query_prefix]
-        left_text = sep.join(left_parts)
-        
-        # 答案文本
-        answer_text = extract_answer_text(query_sample)
-        
-        # 格式化 right ICD（在 answer 之后补上 </answer> 即使没有右侧内容）
-        closing_tag = "\n</answer>"
-        right_text = closing_tag
-        if right_icds:
-            right_icd_parts = [format_icd(s) for s in right_icds]
-            right_icd_block = sep.join(right_icd_parts)
-            right_text = f"{closing_tag}{sep}{right_icd_block}"
-        
-        return left_text, answer_text, right_text
+            # 2) 使用模板生成 query 的完整文本（包含 <answer> 和 </answer>）
+            full_query = pt.generate_ice_item(query_sample)
+            if "<answer>" not in full_query or "</answer>" not in full_query:
+                raise ValueError(
+                    "Prompt template used for scoring must contain <answer> and </answer> tags, "
+                    f"got: {full_query[:100]}"
+                )
+
+            # 拆分成：prefix（含 question 和到 <answer> 为止）、answer_block、suffix（</answer> 之后）
+            before, rest = full_query.split("<answer>", 1)
+            answer_block, after = rest.split("</answer>", 1)
+
+            # prefix：保持到 `<answer>\n`，用于 left_text
+            # 这里显式补回 "<answer>" 以及一个换行，保证格式为：
+            # question: Q\n<answer>\n
+            prefix = before.rstrip() + "\n<answer>\n"
+
+            # answer_text：A_query（去掉多余空白）
+            answer_text = answer_block.strip()
+
+            # suffix："</answer>" 后面的内容（通常为空），我们统一用固定的关闭标签
+            closing_tag = "\n</answer>"
+
+            # 3) left_text = 左侧 ICD + prefix
+            left_parts = left_icd_texts + [prefix.strip()]
+            left_text = sep.join(left_parts)
+
+            # 4) right_text = "</answer>" + 右侧 ICD（如果有）
+            right_text = closing_tag
+            if right_icds:
+                right_icd_texts: List[str] = []
+                for s in right_icds:
+                    icd_text = pt.generate_ice_item(s)
+                    right_icd_texts.append(icd_text.strip())
+                right_icd_block = sep.join(right_icd_texts)
+                right_text = f"{closing_tag}{sep}{right_icd_block}"
+
+            return left_text, answer_text, right_text
+
+    else:
+        # 兼容旧逻辑：使用硬编码的 GSM8K 风格模板
+        def format_icd(sample: Dict) -> str:
+            """将单个 ICD 样本格式化成统一的文本表示。"""
+            if "q_a" in sample:
+                return sample["q_a"]
+            if "question" in sample and "answer" in sample:
+                return f"question: {sample['question']}\n<answer>\n{sample['answer']}\n</answer>"
+            raise ValueError(f"Unknown ICD format: {sample.keys()}")
+
+        def format_query_prefix(query_sample: Dict) -> str:
+            """格式化 query 的 question 部分（不含答案）。"""
+            if "question" in query_sample:
+                return f"question: {query_sample['question']}\n<answer>\n"
+            elif "q_a" in query_sample:
+                qa_text = query_sample["q_a"]
+                if "<answer>" in qa_text:
+                    return qa_text.split("<answer>")[0] + "<answer>\n"
+                return qa_text
+            else:
+                raise ValueError(f"Unknown query format: {query_sample.keys()}")
+
+        def extract_answer_text(query_sample: Dict) -> str:
+            """从 query 中提取答案文本，优先使用 answer 字段，其次解析 q_a。"""
+            if "answer" in query_sample:
+                return str(query_sample["answer"])
+            if "q_a" in query_sample:
+                qa_text = query_sample["q_a"]
+                if "<answer>" in qa_text and "</answer>" in qa_text:
+                    return qa_text.split("<answer>", 1)[1].split("</answer>", 1)[0].strip()
+                if "<answer>" in qa_text:
+                    return qa_text.split("<answer>", 1)[1].strip()
+                return qa_text
+            raise ValueError("query_sample must contain 'answer' or 'q_a' to extract answer text")
+
+        def build_prompt_parts(left_icds: List[Dict], query_sample: Dict, right_icds: List[Dict]) -> Tuple[str, str, Optional[str]]:
+            """
+            根据 left ICD、query、right ICD 构建 prompt 的三个部分：
+            - left_text:  left ICD + query(不含答案) 部分
+            - answer_text:  query 的答案文本
+            - right_text:  right ICD 部分（如果有）
+            """
+            # 格式化 left ICD
+            left_icd_parts = [format_icd(s) for s in left_icds]
+            
+            # query 的 question 部分
+            query_prefix = format_query_prefix(query_sample)
+            
+            # 组合 left 部分
+            left_parts = left_icd_parts + [query_prefix]
+            left_text = sep.join(left_parts)
+            
+            # 答案文本
+            answer_text = extract_answer_text(query_sample)
+            
+            # 格式化 right ICD（在 answer 之后补上 </answer> 即使没有右侧内容）
+            closing_tag = "\n</answer>"
+            right_text = closing_tag
+            if right_icds:
+                right_icd_parts = [format_icd(s) for s in right_icds]
+                right_icd_block = sep.join(right_icd_parts)
+                right_text = f"{closing_tag}{sep}{right_icd_block}"
+            
+            return left_text, answer_text, right_text
 
     def encode(text: str) -> torch.Tensor:
         ids = tokenizer(text)["input_ids"]

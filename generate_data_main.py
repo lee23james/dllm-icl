@@ -147,7 +147,10 @@ def init_interface(cfg: DictConfig, device: str):
     
     logger.info(f"Model loaded successfully on {device}")
     
-    # 创建interface
+    # 获取prompt模板（从task配置中读取）
+    prompt_template = cfg.task.get("template", None)
+    
+    # 创建interface（generate_data阶段使用is_scoring_mode=True，query使用完整answer）
     interface = LLaDAInterface(
         model=model,
         tokenizer=tokenizer,
@@ -155,6 +158,8 @@ def init_interface(cfg: DictConfig, device: str):
         mask_id=cfg.infer_model.get("mask_id", 126336),
         mask_length=cfg.infer_model.get("mask_length", 256),
         split_token=cfg.task.get("split_token", "\n\n"),
+        prompt_template=prompt_template,
+        is_scoring_mode=True,  # generate_data阶段：打分模式，query使用完整answer
     )
     
     return interface
@@ -308,15 +313,15 @@ def _main_impl(cfg: DictConfig):
             raise ValueError("hydra instantiate returned non-callable object")
     except Exception as e:
         logger.warning(f"Failed to instantiate sampler with hydra, using manual instantiation: {e}")
-        sampler = RandSampler(
-            candidate_num=cfg.sampler.candidate_num,
-            sampler_name=cfg.sampler.sampler_name,
-            anchor_sample_num=cfg.sampler.anchor_sample_num,
-            index_ds_len=len(train_ds),
-            dataset_name=cfg.task.task_name,
-            cache_dir=cfg.sampler.cache_dir,
-            overwrite=cfg.sampler.overwrite,
-        )
+    sampler = RandSampler(
+        candidate_num=cfg.sampler.candidate_num,
+        sampler_name=cfg.sampler.sampler_name,
+        anchor_sample_num=cfg.sampler.anchor_sample_num,
+        index_ds_len=len(train_ds),
+        dataset_name=cfg.task.task_name,
+        cache_dir=cfg.sampler.cache_dir,
+        overwrite=cfg.sampler.overwrite,
+    )
     
     sampler_result = sampler(train_ds)
     logger.info(f"Anchor set size: {len(sampler_result['anchor_set'])}")
@@ -378,10 +383,10 @@ def _main_impl(cfg: DictConfig):
             subset_end = (
                 subset_start + subset_size if rank != world_size - 1 else len(anchor_data)
             )
-            sub_res_basename = (
+                sub_res_basename = (
                 os.path.basename(save_path).split(".")[0]
                 + f"_rank:{rank}_({subset_start}, {subset_end}).json"
-            )
+                )
             rank_save_path = sub_save_path.replace(
                 os.path.basename(sub_save_path), sub_res_basename
             )

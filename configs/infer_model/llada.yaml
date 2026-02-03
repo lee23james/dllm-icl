@@ -1,6 +1,6 @@
 # LLaDA模型推理配置
 mask_id: 126336  # mask token的ID
-mask_length: 256  # mask token长度
+mask_length: 128  # mask token长度（修改为128）
 
 # 模型路径配置（必需）
 model_path: "/home/share/model_weight/llada/LLaDA-8B-Base/"  # 请修改为实际的模型路径
@@ -20,6 +20,10 @@ generation_kwargs:
   temperature: 0.0  # 温度
   cfg_scale: 0.0  # CFG scale
   remasking: "low_confidence"  # 重掩码策略
+
+# Prompt模板配置
+prompt_templates:
+  gsm8k_prompt_template: "question: <Q>\n<answer>\n<A>\n</answer>"  # GSM8K prompt模板，<Q>会被question替换，<A>会被完整answer替换（query时<A>用mask替换）
 
 
 

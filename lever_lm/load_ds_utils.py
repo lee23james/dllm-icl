@@ -74,14 +74,14 @@ def load_gsm8k_ds(
             data_files = {
                 "train": train_path,
                 "validation": val_path
-            }
+        }
             ds = load_dataset("parquet", data_files=data_files)
 
-            #添加全局唯一的idx适配杠杠模型,为所有数据集都添上idx的标识
-            #这里加上任务的唯一标识
+        #添加全局唯一的idx适配杠杠模型,为所有数据集都添上idx的标识
+        #这里加上任务的唯一标识
             for split_name in ds.keys():
                 ds[split_name] = ds[split_name].add_column("idx", list(range(len(ds[split_name]))))
-                #添加isquery字段，初始值为0（每个ICL样本都是0）
+            #添加isquery字段，初始值为0（每个ICL样本都是0）
                 ds[split_name] = ds[split_name].add_column("isquery", [0] * len(ds[split_name]))
 
             def process_gsm8k_data(batch):
