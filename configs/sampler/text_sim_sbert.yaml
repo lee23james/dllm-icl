@@ -1,0 +1,24 @@
+# 基于 SBERT 的文本相似度采样器配置
+# 用于 Hydra 自动实例化 TextSimSbertSampler
+
+_target_: lever_lm.candidate_sampler.text_sim_sbert_sampler.TextSimSbertSampler
+
+sampler_name: "text_sim_sbert"
+
+# 从上层 generate_data.yaml 继承的参数
+candidate_num: ${candidate_num}
+anchor_sample_num: ${anchor_sample_num}
+
+# 缓存与特征参数
+cache_dir: "./cache/mmlu"        # 建议为不同数据集使用不同 cache 目录
+overwrite: false                 # 是否覆盖已有的候选集 / 特征缓存
+
+# SBERT 模型与文本字段
+sbert_model_name: "sentence-transformers/all-mpnet-base-v2"  # 可按需替换为中文/多语种模型
+feature_cache_filename: "mmlu_sbert_features.pt"             # 向量缓存文件名
+text_field_name: "question"                                  # 用于相似度检索的文本字段名
+
+# 设备与 batch size
+device: "cuda:0"
+candidate_set_encode_bs: 64
+

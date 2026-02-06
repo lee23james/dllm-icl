@@ -1,0 +1,17 @@
+python3 test_baseline_fixed.py \
+    --task gsm8k \
+    --model llada \
+    --sampler random \
+    --scorer infoscore \
+    --construct_order no_order \
+    --beam_size 3 \
+    --few_shot 4 \
+    --candidate_num 10 \
+    --sample_num 200 \
+    --icd_rank 0 \
+    --device cuda:0 \
+    --mask_length 128 \
+    --block_length 128 \
+    --gen_length 128 \
+    --steps 128 \
+    --mc_num 128

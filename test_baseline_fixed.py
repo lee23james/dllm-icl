@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-测试脚本：使用生成的ICD序列进行推理并计算准确率
+Fixed Baseline测试脚本：使用固定的ICD序列进行推理并计算准确率（所有query使用相同的ICD示例）
 
-根据参数搜索对应的JSON文件，使用JSON中的ICD序列进行推理，计算准确率。
+根据参数搜索对应的JSON文件，使用JSON中第一个anchor的ICD序列（icd_rank=0）作为固定的ICD示例，
+所有query都使用这组固定的ICD示例，query始终放在最后位置。
+这作为baseline来评估固定ICD示例对性能的影响。
 
 使用方法:
-    python test_icd_sequences.py --task gsm8k --model llada --sampler random [其他参数...]
+    python test_baseline_fixed.py --task gsm8k --model llada --sampler random [其他参数...]
 """
 
 import os
@@ -133,37 +135,41 @@ def load_icd_data(json_file: str) -> Dict:
     return data
 
 
-def get_best_icd_sequence_with_query_position(
+def get_fixed_icd_sequence(
     icd_data: Dict,
-    anchor_id: str,
     icd_rank: int = 0,
-) -> Tuple[List[int], int]:
+) -> List[int]:
     """
-    获取第 icd_rank 名的 ICD 序列（按 score 从高到低排序）和 query 在序列中的位置
+    获取固定的ICD序列（使用第一个anchor的icd_rank=0序列）
     
     Args:
         icd_data: ICD数据
-        anchor_id: anchor ID
+        icd_rank: 排名（0表示最高分）
         
     Returns:
-        (icd_sequence, query_position)
         icd_sequence: 完整序列（包含anchor）
-        query_position: anchor在序列中的位置（0-based）
+        first_anchor_id: 第一个anchor的ID
     """
-    if anchor_id not in icd_data:
-        raise ValueError(f"Anchor {anchor_id} not found in ICD data")
+    if len(icd_data) == 0:
+        raise ValueError("ICD data is empty")
     
-    anchor_data = icd_data[anchor_id]
+    # 获取第一个anchor（按key排序）
+    first_anchor_id = sorted(icd_data.keys(), key=lambda x: int(x))[0]
+    
+    if first_anchor_id not in icd_data:
+        raise ValueError(f"First anchor {first_anchor_id} not found in ICD data")
+    
+    anchor_data = icd_data[first_anchor_id]
     id_list = anchor_data['id_list']
     score_list = anchor_data['score_list']
 
     if icd_rank < 0:
         raise ValueError(f"icd_rank must be >= 0, got {icd_rank}")
     if len(id_list) == 0:
-        raise ValueError(f"Anchor {anchor_id} has empty id_list")
+        raise ValueError(f"First anchor {first_anchor_id} has empty id_list")
     if len(score_list) != len(id_list):
         raise ValueError(
-            f"Anchor {anchor_id} has mismatched lengths: "
+            f"First anchor {first_anchor_id} has mismatched lengths: "
             f"len(id_list)={len(id_list)} vs len(score_list)={len(score_list)}"
         )
 
@@ -171,35 +177,26 @@ def get_best_icd_sequence_with_query_position(
     ranked = sorted(range(len(score_list)), key=lambda i: score_list[i], reverse=True)
     if icd_rank >= len(ranked):
         raise ValueError(
-            f"icd_rank={icd_rank} out of range for anchor {anchor_id}: "
+            f"icd_rank={icd_rank} out of range for first anchor {first_anchor_id}: "
             f"only {len(ranked)} candidates"
         )
     chosen_idx = ranked[icd_rank]
-    best_sequence = id_list[chosen_idx]
+    fixed_sequence = id_list[chosen_idx]
     
-    # 找到anchor在序列中的位置
-    anchor_id_int = int(anchor_id)
-    if anchor_id_int not in best_sequence:
-        raise ValueError(f"Anchor {anchor_id} not found in best sequence {best_sequence}")
-    
-    query_position = best_sequence.index(anchor_id_int)
-    
-    return best_sequence, query_position
+    return fixed_sequence, first_anchor_id
 
 
-def build_prompt_from_template(
+def build_prompt_baseline(
     icd_samples: List[Dict],
     query_sample: Dict,
-    query_position: int,
     mask_token_str: str
 ) -> str:
     """
-    按照utils.py中的format_icd和format_query_prefix格式构建prompt
+    构建baseline prompt：query始终放在最后
     
     Args:
         icd_samples: ICD样本列表（训练样本）
         query_sample: query样本（anchor样本）
-        query_position: query在序列中的位置
         mask_token_str: mask token字符串（如 "<|mdm_mask|>" * mask_length）
         
     Returns:
@@ -239,21 +236,8 @@ def build_prompt_from_template(
     else:
         raise ValueError(f"Unknown query format: {query_sample.keys()}")
     
-    # 根据 query_position 插入 query（直接语义：从左到右计数）
-    # 这里的 query_position 是 anchor 在 best_sequence 中的索引（去掉 anchor 之后，等价于
-    # “前面有多少个 ICD 示例”），因此：
-    #   - query_position = 0  表示 query 在最前
-    #   - query_position = len(icd_prompts) 表示 query 在最后
-    if query_position <= 0:
-        # query 在最前
-        all_prompts = [query_prompt] + icd_prompts
-    elif query_position >= len(icd_prompts):
-        # query 在最后
-        all_prompts = icd_prompts + [query_prompt]
-    else:
-        # query 在中间，保持 JSON 序列的从左到右顺序
-        insert_pos = query_position
-        all_prompts = icd_prompts[:insert_pos] + [query_prompt] + icd_prompts[insert_pos:]
+    # Baseline: query始终放在最后
+    all_prompts = icd_prompts + [query_prompt]
     
     # 组合prompt（参考gsm8k_prompt的前置说明）
     front_prompt = '''Please solve the new question step by step just like the following examples. For this question:
@@ -267,7 +251,7 @@ def build_prompt_from_template(
     return combined_prompt
 
 
-def test_icd_sequences(
+def test_baseline_fixed_icd_sequences(
     # 搜索JSON的参数
     task: str = "gsm8k",
     model: str = "llada",
@@ -295,7 +279,7 @@ def test_icd_sequences(
     icd_rank: int = 0,
 ) -> Dict:
     """
-    测试ICD序列的准确率
+    测试ICD序列的准确率（Fixed Baseline版本：所有query使用固定的ICD示例）
     
     Args:
         task: 任务名称
@@ -319,12 +303,13 @@ def test_icd_sequences(
         steps: 采样步数（如果为None，从config读取）
         temperature: 温度（如果为None，从config读取）
         mode: 生成模式
+        icd_rank: 选择第几名score的ICD序列（0表示最高分）
         
     Returns:
         测试结果字典
     """
     print("="*80)
-    print("ICD序列测试脚本")
+    print("ICD序列测试脚本 (Fixed Baseline: 所有query使用固定的ICD示例)")
     print("="*80)
     
     # 1. 加载配置
@@ -353,6 +338,7 @@ def test_icd_sequences(
     print(f"   mask_id: {mask_id}")
     print(f"   使用格式: question: <Q>\\n<answer>\\n<A>\\n</answer> (按照utils.py格式)")
     print(f"   ICD Rank: {icd_rank} (0表示最高分，2表示第三名)")
+    print(f"   ⚠️  Fixed Baseline模式: 所有query使用第一个anchor的固定ICD序列")
     
     # 2. 搜索JSON文件
     print(f"\n📂 搜索JSON文件...")
@@ -391,7 +377,18 @@ def test_icd_sequences(
     anchor_ids = list(icd_data.keys())
     print(f"   找到 {len(anchor_ids)} 个anchor样本")
     
-    # 4. 加载数据集
+    # 4. 获取固定的ICD序列（使用第一个anchor的icd_rank=0序列）
+    print(f"\n🔧 获取固定的ICD序列...")
+    fixed_icd_sequence, first_anchor_id = get_fixed_icd_sequence(
+        icd_data, icd_rank=icd_rank
+    )
+    first_anchor_id_int = int(first_anchor_id)
+    fixed_icd_indices = [idx for idx in fixed_icd_sequence if idx != first_anchor_id_int]
+    print(f"   第一个anchor ID: {first_anchor_id}")
+    print(f"   固定ICD序列: {fixed_icd_sequence}")
+    print(f"   固定ICD索引 (排除anchor): {fixed_icd_indices}")
+    
+    # 5. 加载数据集
     print(f"\n📊 加载数据集...")
     train_ds = load_gsm8k_ds(
         version=cfg.dataset.version,
@@ -400,7 +397,12 @@ def test_icd_sequences(
     )
     print(f"   训练集大小: {len(train_ds)}")
     
-    # 5. 加载模型
+    # 6. 加载固定的ICD样本
+    print(f"\n📚 加载固定的ICD样本...")
+    fixed_icd_samples = [train_ds[idx] for idx in fixed_icd_indices if idx < len(train_ds)]
+    print(f"   固定ICD样本数: {len(fixed_icd_samples)}")
+    
+    # 7. 加载模型
     print(f"\n🤖 加载模型...")
     print(f"   模型路径: {model_path}")
     print(f"   设备: {device}")
@@ -421,7 +423,7 @@ def test_icd_sequences(
     model.eval()
     print("   ✅ 模型加载完成")
     
-    # 6. 准备测试样本
+    # 8. 准备测试样本
     print(f"\n🎯 准备测试样本...")
     test_samples = []
     for anchor_id in anchor_ids:
@@ -456,7 +458,7 @@ def test_icd_sequences(
     
     print(f"   准备测试 {len(test_samples)} 个样本")
     
-    # 7. 对每个anchor进行推理
+    # 9. 对每个anchor进行推理（使用固定的ICD示例）
     print(f"\n🚀 开始推理...")
     results = []
     mask_token_str = "<|mdm_mask|>" * mask_length
@@ -465,41 +467,27 @@ def test_icd_sequences(
         anchor_id = test_sample['anchor_id']
         
         try:
-            # 获取最佳ICD序列和query位置
-            icd_sequence, query_pos_in_sequence = get_best_icd_sequence_with_query_position(
-                icd_data, anchor_id, icd_rank=icd_rank
-            )
-            
-            # 加载ICD样本（排除anchor本身）
-            anchor_id_int = int(anchor_id)
-            icd_indices = [idx for idx in icd_sequence if idx != anchor_id_int]
-            icd_samples = [train_ds[idx] for idx in icd_indices if idx < len(train_ds)]
-            
-            # 计算query在few-shot中的位置
-            # query_pos_in_sequence是anchor在完整序列中的位置
-            # 我们需要计算它在few-shot示例中的位置（排除anchor后）
-            query_position = sum(1 for idx in icd_sequence[:query_pos_in_sequence] if idx != anchor_id_int)
-            
-            # 构建prompt（按照utils.py的格式）
-            prompt_text = build_prompt_from_template(
-                icd_samples=icd_samples,
+            # 使用固定的ICD样本（所有query都使用相同的ICD示例）
+            # 构建prompt（Fixed Baseline: 所有query使用固定的ICD示例，query始终放在最后）
+            prompt_text = build_prompt_baseline(
+                icd_samples=fixed_icd_samples,
                 query_sample=test_sample['sample'],
-                query_position=query_position,
                 mask_token_str=mask_token_str
             )
             
-            # 打印prompt信息
-            print(f"\n{'='*80}")
-            print(f"Anchor ID: {anchor_id}")
-            print(f"Query Position: {query_position}")
-            print(f"ICD Rank: {icd_rank}")
-            print(f"ICD Sequence: {icd_sequence}")
-            print(f"ICD Indices (excluding anchor): {icd_indices}")
-            print(f"{'='*80}")
-            print("PROMPT:")
-            print(f"{'='*80}")
-            print(prompt_text)
-            print(f"{'='*80}\n")
+            # 打印prompt信息（只在第一个样本时打印详细信息）
+            if anchor_id == anchor_ids[0]:
+                print(f"\n{'='*80}")
+                print(f"Anchor ID: {anchor_id} (第一个样本，显示详细信息)")
+                print(f"Query Position: LAST (Fixed Baseline)")
+                print(f"ICD Rank: {icd_rank}")
+                print(f"固定ICD序列: {fixed_icd_sequence}")
+                print(f"固定ICD Indices: {fixed_icd_indices}")
+                print(f"{'='*80}")
+                print("PROMPT:")
+                print(f"{'='*80}")
+                print(prompt_text)
+                print(f"{'='*80}\n")
             
             # Tokenize prompt
             prompt_tokens = tokenizer(prompt_text, return_tensors='pt')['input_ids'].to(device)
@@ -534,7 +522,8 @@ def test_icd_sequences(
             )[0]
             answer = generated_text
             
-            print(f"Generated Answer: {answer}\n")
+            if anchor_id == anchor_ids[0]:
+                print(f"Generated Answer: {answer}\n")
             results.append(answer)
             
         except Exception as e:
@@ -543,7 +532,7 @@ def test_icd_sequences(
             traceback.print_exc()
             results.append("")  # 添加空答案
     
-    # 8. 评估准确率
+    # 10. 评估准确率
     print(f"\n📈 计算准确率...")
     # 准备评估用的数据集格式
     eval_dataset = [{'answer': s['answer']} for s in test_samples]
@@ -561,7 +550,7 @@ def test_icd_sequences(
             self.temperature = temperature
             self.mode = mode
             self.nshot = few_shot
-            self.query_position = 0  # 这里使用0，因为我们已经根据序列中的位置构建了prompt
+            self.query_position = 0  # Fixed Baseline: query在最后，对应position=0
             self.icd_rank = icd_rank
 
             # 来自 run_test_icd_sequences.sh / CLI 的 JSON 相关配置
@@ -573,7 +562,7 @@ def test_icd_sequences(
             self.sample_num = sample_num
     
     args = Args()
-    result_path = os.path.join(os.path.dirname(json_file), "test_results")
+    result_path = os.path.join(os.path.dirname(json_file), "test_results_baseline_fixed")
     
     accuracy = eval_gsm8k(
         results=results,
@@ -584,13 +573,15 @@ def test_icd_sequences(
         iswrite=True
     )
     
-    # 9. 汇总结果
+    # 11. 汇总结果
     print("\n" + "="*80)
-    print("测试结果汇总")
+    print("测试结果汇总 (Fixed Baseline)")
     print("="*80)
     print(f"JSON文件: {json_file}")
     print(f"任务: {task}")
     print(f"测试样本数: {len(test_samples)}")
+    print(f"固定ICD序列来源: 第一个anchor ({first_anchor_id})")
+    print(f"固定ICD序列: {fixed_icd_sequence}")
     print(f"准确率: {accuracy:.4f}")
     print(f"结果保存到: {result_path}")
     print("="*80)
@@ -599,13 +590,15 @@ def test_icd_sequences(
         'json_file': json_file,
         'task': task,
         'num_samples': len(test_samples),
+        'fixed_anchor_id': first_anchor_id,
+        'fixed_icd_sequence': fixed_icd_sequence,
         'accuracy': accuracy,
         'results': results
     }
 
 
 def main():
-    parser = argparse.ArgumentParser(description="测试ICD序列的准确率")
+    parser = argparse.ArgumentParser(description="测试ICD序列的准确率 (Fixed Baseline: 所有query使用固定的ICD示例)")
     
     # 搜索JSON的参数
     parser.add_argument('--task', type=str, default='gsm8k', help='任务名称')
@@ -634,7 +627,7 @@ def main():
     args = parser.parse_args()
     
     # 运行测试
-    test_icd_sequences(
+    test_baseline_fixed_icd_sequences(
         task=args.task,
         model=args.model,
         sampler=args.sampler,

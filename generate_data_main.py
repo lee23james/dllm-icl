@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 阶段1：数据生成主脚本
 使用 sampler 生成 anchor 和 candidate_set，然后对每个 anchor 找到最优 ICD 序列
@@ -217,17 +218,20 @@ def gen_data(
         logger.info(
             f"Rank: {rank} reloading data from {save_path}, begin from {len(final_res)}"
         )
-    if len(final_res) == subset_size:
+    # 固定 resume 起点，避免在循环过程中 len(final_res) 变化导致索引越界
+    start_idx = len(final_res)
+    if start_idx >= subset_size:
         logger.info(f"Rank: {rank} task is Done.")
         return
 
-    subset = subset.select(range(len(final_res), len(subset)))
+    subset = subset.select(range(start_idx, len(subset)))
+    sub_cand_set_idx = sub_cand_set_idx[start_idx:]
     for i, test_data in enumerate(
         tqdm(
             subset,
             disable=(rank != world_size - 1),
             total=subset_size,
-            initial=len(final_res),
+            initial=start_idx,
             ncols=100,
         ),
     ):
@@ -237,8 +241,8 @@ def gen_data(
             test_data["isquery"] = 1
         
         # 获取当前anchor对应的候选集索引列表
-        # subset已经是从len(final_res)开始的，所以需要加上len(final_res)来索引sub_cand_set_idx
-        candidate_indices = sub_cand_set_idx[len(final_res) + i]
+        # subset/sub_cand_set_idx 已经基于 start_idx 对齐切片，因此这里直接用 i 索引即可
+        candidate_indices = sub_cand_set_idx[i]
         # 从训练集中提取候选数据
         candidate_data_list = [train_ds[idx] for idx in candidate_indices]
         # 转换为Dataset
@@ -287,13 +291,17 @@ def _main_impl(cfg: DictConfig):
     dataset_name = cfg.dataset.get("name", cfg.task.task_name)
     model_name = cfg.infer_model.get("name", "llada")
     construct_order = cfg.get("metric", "no_order")
-    sample_num = cfg.sampler.get("anchor_sample_num", cfg.sampler.get("anchor_sample_num", 5000))
+    sample_num = cfg.sampler.get(
+        "anchor_sample_num", cfg.sampler.get("anchor_sample_num", 5000)
+    )
+    # 记录 mc_num，方便区分不同蒙特卡洛采样次数生成的结果文件
+    mc_num = cfg.get("mc_num", 128)
     
     save_file_name = (
         f"{cfg.task.task_name}-{dataset_name}-"
         f"{model_name}-{cfg.sampler.sampler_name}-scorer:{cfg.scorer}-construct_order:{construct_order}-"
         f"beam_size:{cfg.beam_size}-few_shot:{cfg.few_shot_num}-"
-        f"candidate_num:{cfg.sampler.candidate_num}-sample_num:{sample_num}.json"
+        f"candidate_num:{cfg.sampler.candidate_num}-sample_num:{sample_num}-mc_num:{mc_num}.json"
     )
     
     sub_save_path = os.path.join(sub_proc_save_dir, save_file_name)
@@ -372,6 +380,11 @@ def _main_impl(cfg: DictConfig):
         # 等待所有进程完成
         for p in processes:
             p.join()
+        # 如果有子进程异常退出，直接报错，避免 merge 出不完整结果
+        failed = [p for p in processes if p.exitcode not in (0, None)]
+        if failed:
+            msg = ", ".join([f"pid={p.pid} exitcode={p.exitcode}" for p in failed])
+            raise RuntimeError(f"One or more worker processes failed: {msg}")
         
         logger.info("All processes completed. Merging results from all ranks...")
         

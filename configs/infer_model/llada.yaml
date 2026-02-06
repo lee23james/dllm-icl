@@ -1,6 +1,6 @@
 # LLaDA模型推理配置
 mask_id: 126336  # mask token的ID
-mask_length: 128  # mask token长度（修改为128）
+mask_length: 256  # mask token长度（修改为128）
 
 # 模型路径配置（必需）
 model_path: "/home/share/model_weight/llada/LLaDA-8B-Base/"  # 请修改为实际的模型路径
@@ -14,9 +14,9 @@ torch_dtype: "bfloat16"  # 模型精度：bfloat16, float16, float32
 
 # 生成参数
 generation_kwargs:
-  steps: 128  # 采样步数
-  gen_length: 128  # 生成长度
-  block_length: 128  # 块长度
+  steps: 256  # 采样步数
+  gen_length: 256  # 生成长度
+  block_length: 256  # 块长度
   temperature: 0.0  # 温度
   cfg_scale: 0.0  # CFG scale
   remasking: "low_confidence"  # 重掩码策略
@@ -24,6 +24,7 @@ generation_kwargs:
 # Prompt模板配置
 prompt_templates:
   gsm8k_prompt_template: "question: <Q>\n<answer>\n<A>\n</answer>"  # GSM8K prompt模板，<Q>会被question替换，<A>会被完整answer替换（query时<A>用mask替换）
+  mmlu_prompt_template: "question: <Q>\n<answer>\n<A>\n</answer>"  # MMLU多选题模板，<Q>中应包含选项，<A>为正确选项（或解析）
 
 
 

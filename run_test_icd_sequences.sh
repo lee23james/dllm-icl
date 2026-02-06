@@ -11,20 +11,21 @@ CONSTRUCT_ORDER="no_order"
 BEAM_SIZE=3
 FEW_SHOT=4
 CANDIDATE_NUM=10
-SAMPLE_NUM=10
+SAMPLE_NUM=200
 ICD_RANK=0  # 选择第几名score的ICD序列：0=最高分；2=第三名（你现在要测的）
+MC_NUM=128   # 可选：指定生成时的 mc_num，用于精确匹配对应的 JSON 文件
 
 # 评测参数（可选，会从config读取默认值）
 # 注意：以下参数如果不填写（保持注释状态），会自动从 configs/generate_data.yaml 读取
 # configs/generate_data.yaml 会引用 configs/infer_model/llada.yaml 中的配置
 # 如果填写了，会覆盖config中的值
-DEVICE="cuda:1"
+DEVICE="cuda:0"
 # MODEL_PATH=""  # 默认从 configs/infer_model/llada.yaml 的 model_path 读取
-# MASK_LENGTH=""  # 默认从 configs/infer_model/llada.yaml 的 mask_length 读取（默认256）
+MASK_LENGTH=128  # 默认从 configs/infer_model/llada.yaml 的 mask_length 读取（默认256）
 # MASK_ID=""  # 默认从 configs/infer_model/llada.yaml 的 mask_id 读取（默认126336）
-# BLOCK_LENGTH=""  # 默认从 configs/infer_model/llada.yaml 的 generation_kwargs.block_length 读取（默认128）
-# GEN_LENGTH=""  # 默认从 configs/infer_model/llada.yaml 的 generation_kwargs.gen_length 读取（默认128）
-# STEPS=""  # 默认从 configs/infer_model/llada.yaml 的 generation_kwargs.steps 读取（默认128）
+BLOCK_LENGTH=128  # 默认从 configs/infer_model/llada.yaml 的 generation_kwargs.block_length 读取（默认256）
+GEN_LENGTH=128  # 默认从 configs/infer_model/llada.yaml 的 generation_kwargs.gen_length 读取（默认256）
+STEPS=128  # 默认从 configs/infer_model/llada.yaml 的 generation_kwargs.steps 读取（默认256）
 # TEMPERATURE=""  # 默认从 configs/infer_model/llada.yaml 的 generation_kwargs.temperature 读取（默认0.0）
 MODE="original"
 
@@ -70,6 +71,10 @@ fi
 
 if [ ! -z "$TEMPERATURE" ]; then
     CMD="$CMD --temperature $TEMPERATURE"
+fi
+
+if [ ! -z "$MC_NUM" ]; then
+    CMD="$CMD --mc_num $MC_NUM"
 fi
 
 # 打印命令
