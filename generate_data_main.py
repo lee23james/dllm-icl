@@ -313,11 +313,19 @@ def _main_impl(cfg: DictConfig):
     # 记录 mc_num，方便区分不同蒙特卡洛采样次数生成的结果文件
     mc_num = cfg.get("mc_num", 128)
     
+    # 额外记录采样阶段的重要超参数（例如 coarse_k 与 mmr_lambda），方便后续加载与区分
+    coarse_k = cfg.sampler.get("coarse_k", None)
+    mmr_lambda = cfg.sampler.get("mmr_lambda", None)
+    other_info = ""
+    if coarse_k is not None and mmr_lambda is not None:
+        other_info = f"-coarse_k:{coarse_k}-lambda:{mmr_lambda}"
+
     save_file_name = (
         f"{cfg.task.task_name}-{dataset_name}-"
         f"{model_name}-{cfg.sampler.sampler_name}-scorer:{cfg.scorer}-construct_order:{construct_order}-"
         f"beam_size:{cfg.beam_size}-few_shot:{cfg.few_shot_num}-"
-        f"candidate_num:{cfg.sampler.candidate_num}-sample_num:{sample_num}-mc_num:{mc_num}.json"
+        f"candidate_num:{cfg.sampler.candidate_num}-sample_num:{sample_num}-mc_num:{mc_num}"
+        f"{other_info}.json"
     )
     
     sub_save_path = os.path.join(sub_proc_save_dir, save_file_name)

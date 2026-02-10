@@ -51,6 +51,9 @@ class TextSimQwenMMRSampler(BaseSampler):
         anchor_idx_list: List[int] | None = None,
     ) -> None:
         # 注意：other_info 用于区分不同特征缓存（比如不同模型 / 不同字段）
+        # 这里我们把 coarse_k 和 mmr_lambda 也编码进 candidate_set 的 cache 文件名中，
+        # 保证不同检索超参数不会错误复用同一份候选缓存。
+        other_info = f"coarse_k:{coarse_k}-lambda:{mmr_lambda}"
         super().__init__(
             candidate_num=candidate_num,
             sampler_name=sampler_name,
@@ -59,7 +62,7 @@ class TextSimQwenMMRSampler(BaseSampler):
             overwrite=overwrite,
             anchor_sample_num=anchor_sample_num,
             index_ds_len=index_ds_len,
-            other_info=feature_cache_filename,
+            other_info=other_info,
             anchor_idx_list=anchor_idx_list,
         )
         # qwen_model_path: 实际用于 AutoModel.from_pretrained 的本地/远程路径
