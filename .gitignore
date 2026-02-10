@@ -14,7 +14,7 @@ batch_analysis_*_results_*/
 # 允许 data 文件夹下的 JSON 文件
 !data/*.json
 !data/*.jsonl
-
+!data/MMLU/*
 # Analysis output directories
 llada_gsm8k_eval/results_*/
 llada_gsm8k_eval/IEAR_results_*/
