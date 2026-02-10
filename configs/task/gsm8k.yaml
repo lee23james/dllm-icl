@@ -3,7 +3,17 @@ task_name: "gsm8k"
 split_token: "\n\n"  # ICD之间的分隔符
 template: ${infer_model.prompt_templates.gsm8k_prompt_template}  # 引用infer_model中定义的GSM8K prompt模板
 
+column_token_map:
+  question: "<Q>"
+  answer: "<A>"
 
+input_columns: ["question", "answer"]
+output_column: "answer"
+mask_column_token_map: "answer"
 
-
-
+gen_args:
+  gen_length: 256
+  steps: 256
+  block_length: 256
+  mask_length: 256
+  mc_num: 128

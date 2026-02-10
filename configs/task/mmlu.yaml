@@ -1,0 +1,27 @@
+#mmlu的配置
+task_name: "mmlu"
+split_token: "\n\n"  # ICD之间的分隔符
+#引用的是固定的模版
+template: ${infer_model.prompt_templates.mmlu_prompt_template}  # 引用infer_model中定义的MMLU prompt模板
+#这里用的是mmlu数据集的准确字段,并且进行带入
+#这里我之后还要加一个mask的字段标注mask是哪个地方
+#choices数组会在数据加载时自动展开为choice_a, choice_b, choice_c, choice_d字段
+column_token_map:
+  question: "<Q>"
+  answer: "<A>"
+  choice_a: "<a>"
+  choice_b: "<b>"
+  choice_c: "<c>"
+  choice_d: "<d>"
+
+input_columns: ["question", "choice_a", "choice_b", "choice_c", "choice_d"]
+output_column: "answer"
+mask_column_token_map: "answer"
+
+gen_args:
+  gen_length: 2
+  steps: 2
+  block_length: 2
+  mask_length: 2
+  mc_num: 1
+

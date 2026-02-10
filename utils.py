@@ -10,7 +10,7 @@ from open_mmicl.interface import LLaDAInterface
 from open_mmicl.interface import BaseInterface
 #这里开始计算分数,需要参考的主要是之前做的东西
 #这里是打分函数,我想用来进行分数的计算
-from lever_lm.load_ds_utils import load_hf_ds,load_gsm8k_ds
+from lever_lm.load_ds_utils import load_hf_ds, load_gsm8k_ds, load_mmlu_ds
 
 #cfg是任务配置,方便进行查询
 #
@@ -43,9 +43,37 @@ def load_ds(cfg,split=None):
             data_path=data_path,
             split=split
         )
+    elif cfg.task.task_name == "mmlu":
+        # MMLU 任务：使用本地 parquet + load_mmlu_ds（会自动展开 choices 并添加 idx / isquery）
+        if split == "train":
+            train_path = cfg.dataset.train_path
+            ds = load_mmlu_ds(
+                version=cfg.dataset.version,
+                data_path=train_path,
+                split="train",
+            )
+        elif split in ("test", "validation"):
+            test_path = cfg.dataset.get("test_path") or cfg.dataset.get("val_path")
+            if test_path is None:
+                raise ValueError("test_path or val_path must be provided for test/validation split in MMLU")
+            ds = load_mmlu_ds(
+                version=cfg.dataset.version,
+                data_path=test_path,
+                split="validation",
+            )
+        else:
+            # 默认加载 train
+            train_path = cfg.dataset.train_path
+            ds = load_mmlu_ds(
+                version=cfg.dataset.version,
+                data_path=train_path,
+                split="train",
+            )
     else:
         try:
-            ds=load_hf_ds(cfg.dataset.hf_ds)
+            # 其他 HF 数据集：可选展开 choices 数组
+            expand_choices = (cfg.task.task_name == "mmlu")
+            ds = load_hf_ds(cfg.dataset.hf_ds, expand_choices=expand_choices)
         except Exception as e:
             raise ValueError(f"dataset load fail with error: {e}")
     return ds
@@ -63,6 +91,7 @@ def get_info_score(
     split_token: Optional[str] = None,
     mc_num: int = 128,                 # Monte Carlo采样次数
     cfg_scale: float = 0.0,            # CFG scale
+    output_column: Optional[str] = None,  # 用于从 query 中提取答案字段（如 "answer"）
 ) -> torch.Tensor:
     """
     批量计算InfoScore分数（反向插入语义）
@@ -151,63 +180,61 @@ def get_info_score(
     pt = getattr(interface, "pt", None)
 
     if pt is not None:
-        def build_prompt_parts(left_icds: List[Dict], query_sample: Dict, right_icds: List[Dict]) -> Tuple[str, str, Optional[str]]:
-            """
-            使用 PromptTemplate 构建打分用的三个部分：
-            - left_text: left ICD + query 的 question + "<answer>\\n"（不含答案主体）
-            - answer_text: query 的答案文本（位于 <answer> 与 </answer> 之间）
-            - right_text:  "</answer>" + 右侧 ICD（如果有）
+        if output_column is None:
+            raise ValueError(
+                "output_column must be provided when using PromptTemplate for InfoScore scoring "
+                "(e.g., 'answer' as defined in task.output_column)."
+            )
 
-            要求 prompt_template 形如：
-                question: <Q>\\n<answer>\\n<A>\\n</answer>
+        def build_prompt_parts(
+            left_icds: List[Dict],
+            query_sample: Dict,
+            right_icds: List[Dict],
+        ) -> Tuple[str, str, Optional[str]]:
             """
-            # 1) 使用模板生成左侧 ICD 的完整文本
+            通用打分模板（适用于 MMLU / GSM8K 等）：
+            - 上部分 left_text  = 前面的 ICD（完整 prompt） + 当前 query 的“无答案版 prompt”
+              （通过 PromptTemplate.generate_text_for_embedding 去掉 output_column 字段）
+            - 中间部分 answer_text = query_sample[output_column]（答案本身）
+            - 下部分 right_text  = 后面的 ICD（完整 prompt），如果没有则为 None
+            """
+            # 1) 左侧 ICD：使用完整的 ICD prompt
             left_icd_texts: List[str] = []
             for s in left_icds:
                 icd_text = pt.generate_ice_item(s)
                 left_icd_texts.append(icd_text.strip())
 
-            # 2) 使用模板生成 query 的完整文本（包含 <answer> 和 </answer>）
-            full_query = pt.generate_ice_item(query_sample)
-            if "<answer>" not in full_query or "</answer>" not in full_query:
+            # 2) Query 上半部分：使用“无答案版” prompt
+            if output_column not in query_sample:
                 raise ValueError(
-                    "Prompt template used for scoring must contain <answer> and </answer> tags, "
-                    f"got: {full_query[:100]}"
+                    f"output_column '{output_column}' not found in query_sample keys: {list(query_sample.keys())}"
                 )
+            query_upper = pt.generate_text_for_embedding(
+                query_sample,
+                output_column=output_column,
+            ).strip()
 
-            # 拆分成：prefix（含 question 和到 <answer> 为止）、answer_block、suffix（</answer> 之后）
-            before, rest = full_query.split("<answer>", 1)
-            answer_block, after = rest.split("</answer>", 1)
-
-            # prefix：保持到 `<answer>\n`，用于 left_text
-            # 这里显式补回 "<answer>" 以及一个换行，保证格式为：
-            # question: Q\n<answer>\n
-            prefix = before.rstrip() + "\n<answer>\n"
-
-            # answer_text：A_query（去掉多余空白）
-            answer_text = answer_block.strip()
-
-            # suffix："</answer>" 后面的内容（通常为空），我们统一用固定的关闭标签
-            closing_tag = "\n</answer>"
-
-            # 3) left_text = 左侧 ICD + prefix
-            left_parts = left_icd_texts + [prefix.strip()]
+            # 拼接左侧完整文本：前面的 ICD + query 上半部分
+            left_parts = left_icd_texts + [query_upper]
             left_text = sep.join(left_parts)
 
-            # 4) right_text = "</answer>" + 右侧 ICD（如果有）
-            right_text = closing_tag
+            # 3) 中间答案部分：直接从 query_sample[output_column] 读取
+            answer_val = query_sample[output_column]
+            answer_text = str(answer_val)
+
+            # 4) 右侧 ICD：如果存在，则使用完整 ICD prompt，否则为 None
+            right_text = None
             if right_icds:
                 right_icd_texts: List[str] = []
                 for s in right_icds:
                     icd_text = pt.generate_ice_item(s)
                     right_icd_texts.append(icd_text.strip())
-                right_icd_block = sep.join(right_icd_texts)
-                right_text = f"{closing_tag}{sep}{right_icd_block}"
+                right_text = sep.join(right_icd_texts)
 
             return left_text, answer_text, right_text
 
     else:
-        # 兼容旧逻辑：使用硬编码的 GSM8K 风格模板
+        # 没有 PromptTemplate 时，退回到老的 GSM8K 风格硬编码逻辑
         def format_icd(sample: Dict) -> str:
             """将单个 ICD 样本格式化成统一的文本表示。"""
             if "q_a" in sample:
@@ -241,26 +268,30 @@ def get_info_score(
                 return qa_text
             raise ValueError("query_sample must contain 'answer' or 'q_a' to extract answer text")
 
-        def build_prompt_parts(left_icds: List[Dict], query_sample: Dict, right_icds: List[Dict]) -> Tuple[str, str, Optional[str]]:
+        def build_prompt_parts(
+            left_icds: List[Dict],
+            query_sample: Dict,
+            right_icds: List[Dict],
+        ) -> Tuple[str, str, Optional[str]]:
             """
-            根据 left ICD、query、right ICD 构建 prompt 的三个部分：
+            兼容旧逻辑：根据 left ICD、query、right ICD 构建 prompt 的三个部分：
             - left_text:  left ICD + query(不含答案) 部分
             - answer_text:  query 的答案文本
             - right_text:  right ICD 部分（如果有）
             """
             # 格式化 left ICD
             left_icd_parts = [format_icd(s) for s in left_icds]
-            
+
             # query 的 question 部分
             query_prefix = format_query_prefix(query_sample)
-            
+
             # 组合 left 部分
             left_parts = left_icd_parts + [query_prefix]
             left_text = sep.join(left_parts)
-            
+
             # 答案文本
             answer_text = extract_answer_text(query_sample)
-            
+
             # 格式化 right ICD（在 answer 之后补上 </answer> 即使没有右侧内容）
             closing_tag = "\n</answer>"
             right_text = closing_tag
@@ -268,7 +299,7 @@ def get_info_score(
                 right_icd_parts = [format_icd(s) for s in right_icds]
                 right_icd_block = sep.join(right_icd_parts)
                 right_text = f"{closing_tag}{sep}{right_icd_block}"
-            
+
             return left_text, answer_text, right_text
 
     def encode(text: str) -> torch.Tensor:

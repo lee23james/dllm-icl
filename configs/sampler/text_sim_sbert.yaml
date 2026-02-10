@@ -1,6 +1,6 @@
 # 基于 SBERT 的文本相似度采样器配置
 # 用于 Hydra 自动实例化 TextSimSbertSampler
-
+#暂时随便乱写的
 _target_: lever_lm.candidate_sampler.text_sim_sbert_sampler.TextSimSbertSampler
 
 sampler_name: "text_sim_sbert"

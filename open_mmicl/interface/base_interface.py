@@ -27,6 +27,8 @@ class BaseInterface(ABC):
         prompt_template: Optional[str] = None,
         split_token: str = "\n\n",
         is_scoring_mode: bool = False,
+        column_token_map: Optional[Dict[str, str]] = None,
+        mask_column_token_map: Optional[Dict[str, str]] = None,
     ):
         """
         初始化接口
@@ -65,6 +67,8 @@ class BaseInterface(ABC):
                 prompt_template=prompt_template,
                 mask_token_str=mask_token_str,
                 mask_length=mask_length,
+                column_token_map=column_token_map,
+                mask_column_token_map=mask_column_token_map,
             )
         else:
             self.pt = None

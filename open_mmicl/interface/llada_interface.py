@@ -25,6 +25,8 @@ class LLaDAInterface(BaseInterface):
         split_token: str = "\n\n",
         prompt_template: Optional[str] = None,
         is_scoring_mode: bool = False,
+        column_token_map: Optional[Dict[str, str]] = None,
+        mask_column_token_map: Optional[Dict[str, str]] = None,
     ):
         """
         初始化LLaDA接口
@@ -32,7 +34,7 @@ class LLaDAInterface(BaseInterface):
         Args:
             model: LLaDA模型
             tokenizer: tokenizer
-            task: 任务名称（如'gsm8k'）
+            task: 任务名称（如'gsm8k', 'mmlu'）
             mask_id: mask token的ID
             mask_length: mask token的长度
             split_token: ICD之间的分隔符
@@ -40,8 +42,21 @@ class LLaDAInterface(BaseInterface):
             is_scoring_mode: 是否为打分模式
                 - True: 打分阶段（generate_data），query使用完整answer
                 - False: 推理阶段（evaluation），query使用mask
+            column_token_map: 字段到占位符的映射（用于 PromptTemplate）
+            mask_column_token_map: 需要 mask 的字段到占位符映射（用于 PromptTemplate）
         """
-        super().__init__(model, tokenizer, task, mask_id, mask_length, prompt_template, split_token, is_scoring_mode)
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            task=task,
+            mask_id=mask_id,
+            mask_length=mask_length,
+            prompt_template=prompt_template,
+            split_token=split_token,
+            is_scoring_mode=is_scoring_mode,
+            column_token_map=column_token_map,
+            mask_column_token_map=mask_column_token_map,
+        )
         # 获取mask token字符串（用于构建prompt，保持向后兼容）
         try:
             self.mask_token_str = self.tokenizer.decode([self.mask_id])

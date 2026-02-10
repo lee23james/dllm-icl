@@ -1,9 +1,9 @@
 #暂时先准备这些
 # 阶段1：数据生成配置
 defaults:
-  - task/gsm8k
-  - dataset/gsm8k
-  - sampler/random
+  - task/mmlu
+  - dataset/mmlu
+  - sampler/text_sim_qwen_mmr
   - infer_model/llada
 
 # 生成参数
@@ -16,8 +16,8 @@ device: cuda
 precision: bf16
 
 # Sampler参数（默认值，会被 sampler/random.yaml 通过 ${variable} 继承）
-candidate_num: 20  # 候选集大小（默认值，可通过命令行覆盖：sampler.candidate_num=10）
-anchor_sample_num: 500  # anchor数量（默认值，可通过命令行覆盖：sampler.anchor_sample_num=10）
+candidate_num: 64  # 候选集大小（默认值，可通过命令行覆盖：sampler.candidate_num=10）
+anchor_sample_num: 100  # anchor数量（默认值，可通过命令行覆盖：sampler.anchor_sample_num=10）
 
 # 多卡配置（可选）
 use_multi_gpu: false  # 是否使用多GPU
@@ -29,5 +29,5 @@ output_dir: "./generated_icd_data"
 merge_results: false  # 多卡模式下，是否合并所有rank的结果
 
 # 测试配置（用于test_candidate_scoring.py）
-mc_num: 20  # 测试时使用的Monte Carlo采样次数（可以减小以加快速度）
+mc_num: 1  # 测试时使用的Monte Carlo采样次数（可以减小以加快速度）
 cfg_scale: 0.0  # CFG scale

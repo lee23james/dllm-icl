@@ -1,0 +1,5 @@
+version: "local" 
+train_path: "/home/lzh/llada-icl/data/MMLU/auxiliary_train/train-00000-of-00001.parquet"  # 训练集路径
+test_path: "/home/lzh/llada-icl/data/MMLU/all/test-00000-of-00001.parquet"  # 测试集路径（仅icl_inference使用，实际可能是validation split）
+template: ${infer_model.prompt_templates.mmlu_prompt_template}  # 引用infer_model中定义的MMLU prompt模板 
+name: "mmlu"

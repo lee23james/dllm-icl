@@ -1,0 +1,29 @@
+# 基于 Qwen-Embedding + MMR 的文本相似度采样器配置
+# 用于 Hydra 自动实例化 TextSimQwenMMRSampler
+_target_: lever_lm.candidate_sampler.text_sim_qwen_mmr_sampler.TextSimQwenMMRSampler
+
+sampler_name: "text_sim_qwen_mmr"
+
+# 从上层 generate_data.yaml 继承的参数
+candidate_num: ${candidate_num}
+anchor_sample_num: ${anchor_sample_num}
+
+# 缓存与特征参数
+cache_dir: "./cache/mmlu"        # 建议为不同数据集使用不同 cache 目录
+overwrite: false                 # 是否覆盖已有的候选集 / 特征缓存
+
+# Qwen 模型与文本字段
+qwen_model_path: "/home/lzh/.cache/modelscope/hub/models/Qwen/Qwen3-Embedding-4B"  # 使用 Qwen2.5-0.5B-Instruct 作为默认
+                                                # 如需使用 Qwen3-Embedding-4B，请修改为对应模型路径
+qwen_model_name: "Qwen3-Embedding-4B"
+feature_cache_filename: "${task.task_name}-${dataset.name}-${sampler.qwen_model_name}-TextFeatures.pt"  # 向量缓存文件名
+text_field_name: "question"                     # 用于相似度检索的文本字段名
+dataset_type: ${dataset.name}                           # 数据集类型："auto", "mmlu", "gsm8k" 等
+
+# 设备与 batch size
+device: ${device}
+
+#生成函数
+encode_batch_size: 64
+coarse_k: 200
+mmr_lambda: 0.1

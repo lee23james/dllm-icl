@@ -152,6 +152,20 @@ def init_interface(cfg: DictConfig, device: str):
     # 获取prompt模板（从task配置中读取）
     prompt_template = cfg.task.get("template", None)
     
+    # 获取column_token_map（从task配置中读取）
+    column_token_map = cfg.task.get("column_token_map", None)
+    if column_token_map is not None:
+        # 将DictConfig转换为普通字典
+        column_token_map = dict(column_token_map)
+    
+    # 获取mask_column_token_map（从task配置中读取）
+    mask_column_token_map = cfg.task.get("mask_column_token_map", None)
+    if mask_column_token_map is not None:
+        # 将DictConfig转换为普通字典（如果是字典）或保持字符串格式
+        if isinstance(mask_column_token_map, dict):
+            mask_column_token_map = dict(mask_column_token_map)
+        # 如果是字符串，保持原样（PromptTemplate会处理）
+    
     # 创建interface（generate_data阶段使用is_scoring_mode=True，query使用完整answer）
     interface = LLaDAInterface(
         model=model,
@@ -162,6 +176,8 @@ def init_interface(cfg: DictConfig, device: str):
         split_token=cfg.task.get("split_token", "\n\n"),
         prompt_template=prompt_template,
         is_scoring_mode=True,  # generate_data阶段：打分模式，query使用完整answer
+        column_token_map=column_token_map,
+        mask_column_token_map=mask_column_token_map,
     )
     
     return interface

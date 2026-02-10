@@ -112,13 +112,41 @@ def main(cfg: DictConfig):
     
     # 4. 初始化interface
     logger.info("Initializing interface...")
+    # 获取prompt模板和column_token_map（从task配置中读取）
+    prompt_template = cfg.task.get("template", None)
+    column_token_map = cfg.task.get("column_token_map", None)
+    if column_token_map is not None:
+        # 将DictConfig转换为普通字典
+        column_token_map = dict(column_token_map)
+    
+    # 获取mask_column_token_map（从task配置中读取）
+    mask_column_token_map = cfg.task.get("mask_column_token_map", None)
+    if mask_column_token_map is not None:
+        # 将DictConfig转换为普通字典（如果是字典）或保持字符串格式
+        if isinstance(mask_column_token_map, dict):
+            mask_column_token_map = dict(mask_column_token_map)
+        # 如果是字符串，保持原样（PromptTemplate会处理）
+
+    # 优先使用 task.gen_args 中的 mask_length，其次回退到 infer_model.mask_length
+    mask_length = cfg.infer_model.get("mask_length", 256)
+    task_gen_args = cfg.task.get("gen_args", None)
+    if task_gen_args is not None and "mask_length" in task_gen_args:
+        try:
+            mask_length = int(task_gen_args.mask_length)
+            logger.info(f"Using mask_length from task.gen_args: {mask_length}")
+        except Exception as e:
+            logger.warning(f"Failed to read mask_length from task.gen_args, fallback to infer_model.mask_length. Error: {e}")
+    
     interface = LLaDAInterface(
         model=model,
         tokenizer=tokenizer,
         task=cfg.task.task_name,
         mask_id=cfg.infer_model.mask_id,
-        mask_length=cfg.infer_model.mask_length,
+        mask_length=mask_length,
         split_token=cfg.task.get("split_token", "\n\n"),
+        prompt_template=prompt_template,
+        column_token_map=column_token_map,
+        mask_column_token_map=mask_column_token_map,
     )
     
     # 5. 初始化评估器
