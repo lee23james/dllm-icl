@@ -1,7 +1,7 @@
 # 阶段2：ICL推理配置
 defaults:
-  - task/gsm8k
-  - dataset/gsm8k
+  - task/mmlu
+  - dataset/mmlu
   - infer_model/llada
 
 # Retriever配置

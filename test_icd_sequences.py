@@ -28,7 +28,9 @@ if project_root not in sys.path:
 
 from transformers import AutoTokenizer, AutoModel
 from utils.eval_utils import gsm8k_check, eval_gsm8k
-from lever_lm.load_ds_utils import load_gsm8k_ds
+from lever_lm.load_ds_utils import load_gsm8k_ds, load_mmlu_ds
+from open_mmicl.prompt_template import PromptTemplate
+from open_mmicl.metrics import GSM8KMetrics, MMLUMetrics
 import hydra
 from omegaconf import DictConfig
 
@@ -45,6 +47,8 @@ def find_json_by_params(
     candidate_num: int,
     sample_num: int,
     mc_num: Optional[int] = None,
+    coarse_k: Optional[int] = None,
+    mmr_lambda: Optional[float] = None,
 ) -> Optional[str]:
     """
     根据参数搜索对应的JSON文件
@@ -69,51 +73,67 @@ def find_json_by_params(
     #   task-task-model-sampler-scorer:xxx-construct_order:xxx-beam_size:x-few_shot:x-candidate_num:x-sample_num:x-mc_num:y.json
     # - 如果指定 mc_num：精确匹配该 mc_num
     # - 如果未指定：在 sample_num 后面使用通配符 *.json，兼容旧版（无 mc_num 字段）
-    # 注意：sampler可能是random_sampler或random
-    sampler_pattern = sampler if "_sampler" in sampler else f"{sampler}_sampler"
+    # 注意：实际文件名使用的是 sampler_name（如 text_sim_qwen_mmr），可能没有 _sampler 后缀
     
-    pattern = (
-        f"{task}-{task}-{model}-{sampler_pattern}-scorer:{scorer}-"
-        f"construct_order:{construct_order}-"
-        f"beam_size:{beam_size}-few_shot:{few_shot}-"
-        f"candidate_num:{candidate_num}-sample_num:{sample_num}"
-    )
+    # 先尝试使用原始 sampler 名称（因为 generate_data_main.py 使用的是 cfg.sampler.sampler_name）
+    sampler_patterns = [sampler]
+    # 如果原始名称中没有 _sampler，也尝试添加后缀（兼容旧格式）
+    if "_sampler" not in sampler:
+        sampler_patterns.append(f"{sampler}_sampler")
     
-    if mc_num is not None:
-        # 精确匹配指定 mc_num
-        pattern = f"{pattern}-mc_num:{mc_num}.json"
+    # 尝试每个 sampler_pattern
+    for sampler_pattern in sampler_patterns:
+        pattern = (
+            f"{task}-{task}-{model}-{sampler_pattern}-scorer:{scorer}-"
+            f"construct_order:{construct_order}-"
+            f"beam_size:{beam_size}-few_shot:{few_shot}-"
+            f"candidate_num:{candidate_num}-sample_num:{sample_num}"
+        )
+        
+        # 添加 mc_num（如果指定）
+        if mc_num is not None:
+            pattern = f"{pattern}-mc_num:{mc_num}"
+        
+        # 添加 coarse_k 和 lambda（如果指定，用于 MMLU）
+        if coarse_k is not None and mmr_lambda is not None:
+            pattern = f"{pattern}-coarse_k:{coarse_k}-lambda:{mmr_lambda}"
+        
+        # 构建完整搜索路径
+        # 如果 coarse_k 和 lambda 未指定，使用通配符匹配（兼容包含这些参数的文件名）
+        if coarse_k is None or mmr_lambda is None:
+            # 允许 sample_num 后面追加任意后缀（例如 -mc_num:128-coarse_k:200-lambda:0.1）
+            pattern = f"{pattern}*.json"
+        else:
+            pattern = f"{pattern}.json"
+        
+        # 在当前搜索目录中查找
         search_path = os.path.join(search_dir, pattern)
-    else:
-        # 允许 sample_num 后面追加任意后缀（例如 -mc_num:128），保持对旧文件名的兼容
-        search_path = os.path.join(search_dir, pattern + "*.json")
-    matches = glob.glob(search_path)
-    
-    if matches:
-        return matches[0]
-    
-    # 如果找不到，尝试在generated_data目录中搜索（如果当前在sub_proc_data中）
-    if "sub_proc_data" in search_dir:
-        # 如果search_dir是 .../generated_data/sub_proc_data，则generated_data_dir应该是 .../generated_data
-        parent_dir = os.path.dirname(search_dir)  # 获取 .../generated_data
-        generated_data_dir = parent_dir  # generated_data目录就是父目录
-        if os.path.exists(generated_data_dir):
-            search_path = os.path.join(generated_data_dir, pattern)
-            matches = glob.glob(search_path)
-            if matches:
-                return matches[0]
-    
-    # 如果还是找不到，尝试在generated_data目录中搜索（如果当前不在sub_proc_data中）
-    if "sub_proc_data" not in search_dir and "generated_data" in search_dir:
-        # 已经在generated_data中，不需要再搜索
-        pass
-    elif "generated_data" not in search_dir:
-        # 如果不在generated_data中，尝试添加generated_data路径
-        if os.path.exists(os.path.join(search_dir, "generated_data")):
-            generated_data_dir = os.path.join(search_dir, "generated_data")
-            search_path = os.path.join(generated_data_dir, pattern)
-            matches = glob.glob(search_path)
-            if matches:
-                return matches[0]
+        matches = glob.glob(search_path)
+        if matches:
+            return matches[0]
+        
+        # 如果找不到，尝试在generated_data目录中搜索（如果当前在sub_proc_data中）
+        if "sub_proc_data" in search_dir:
+            parent_dir = os.path.dirname(search_dir)  # 获取 .../generated_data
+            generated_data_dir = parent_dir
+            if os.path.exists(generated_data_dir):
+                search_path = os.path.join(generated_data_dir, pattern)
+                matches = glob.glob(search_path)
+                if matches:
+                    return matches[0]
+        
+        # 如果还是找不到，尝试在generated_data目录中搜索（如果当前不在sub_proc_data中）
+        if "sub_proc_data" not in search_dir and "generated_data" in search_dir:
+            # 已经在generated_data中，不需要再搜索
+            pass
+        elif "generated_data" not in search_dir:
+            # 如果不在generated_data中，尝试添加generated_data路径
+            if os.path.exists(os.path.join(search_dir, "generated_data")):
+                generated_data_dir = os.path.join(search_dir, "generated_data")
+                search_path = os.path.join(generated_data_dir, pattern)
+                matches = glob.glob(search_path)
+                if matches:
+                    return matches[0]
     
     return None
 
@@ -191,59 +211,36 @@ def build_prompt_from_template(
     icd_samples: List[Dict],
     query_sample: Dict,
     query_position: int,
-    mask_token_str: str
+    prompt_template: Optional[PromptTemplate] = None,
+    split_token: str = "\n\n",
 ) -> str:
     """
-    按照utils.py中的format_icd和format_query_prefix格式构建prompt
+    使用 PromptTemplate 构建 prompt（支持 GSM8K 和 MMLU）
     
     Args:
         icd_samples: ICD样本列表（训练样本）
         query_sample: query样本（anchor样本）
-        query_position: query在序列中的位置
-        mask_token_str: mask token字符串（如 "<|mdm_mask|>" * mask_length）
+        query_position: query在序列中的位置（0表示最前，nshot表示最后）
+        prompt_template: PromptTemplate 实例（必须提供）
+        split_token: 分隔符（默认 "\n\n"）
         
     Returns:
         构建好的prompt字符串
     """
-    # 构建ICD示例的prompt（按照utils.py中的format_icd格式）
+    if prompt_template is None:
+        raise ValueError("prompt_template must be provided. Please ensure task config has template and column_token_map.")
+    
+    # 使用 PromptTemplate 构建 prompt
+    # 1. 生成 ICD prompts
     icd_prompts = []
     for sample in icd_samples:
-        # 按照utils.py中的format_icd逻辑格式化
-        if 'q_a' in sample:
-            # 如果已经有q_a字段，直接使用
-            icd_prompt = sample['q_a']
-        elif 'question' in sample and 'answer' in sample:
-            # 按照format_icd的格式：question: {question}\n<answer>\n{answer}\n</answer>
-            question = sample['question']
-            answer = sample['answer']
-            icd_prompt = f"question: {question}\n<answer>\n{answer}\n</answer>"
-        else:
-            raise ValueError(f"Unknown ICD format: {sample.keys()}")
-        
+        icd_prompt = prompt_template.generate_ice_item(sample)
         icd_prompts.append(icd_prompt)
     
-    # 构建query prompt（按照utils.py中的format_query_prefix格式，answer部分用mask替换）
-    if 'question' in query_sample:
-        # 按照format_query_prefix的格式：question: {question}\n<answer>\n
-        query_question = query_sample['question']
-        query_prompt = f"question: {query_question}\n<answer>\n{mask_token_str}"
-    elif 'q_a' in query_sample:
-        # 如果只有q_a，提取question部分
-        q_a = query_sample['q_a']
-        if '<answer>' in q_a:
-            # 提取question部分，然后加上<answer>\n和mask
-            question_part = q_a.split('<answer>')[0].strip()
-            query_prompt = f"{question_part}\n<answer>\n{mask_token_str}"
-        else:
-            query_prompt = q_a
-    else:
-        raise ValueError(f"Unknown query format: {query_sample.keys()}")
+    # 2. 生成 query prompt（使用 mask）
+    query_prompt = prompt_template.generate_query_item(query_sample, use_mask=True)
     
-    # 根据 query_position 插入 query（直接语义：从左到右计数）
-    # 这里的 query_position 是 anchor 在 best_sequence 中的索引（去掉 anchor 之后，等价于
-    # “前面有多少个 ICD 示例”），因此：
-    #   - query_position = 0  表示 query 在最前
-    #   - query_position = len(icd_prompts) 表示 query 在最后
+    # 3. 根据 query_position 组合
     if query_position <= 0:
         # query 在最前
         all_prompts = [query_prompt] + icd_prompts
@@ -251,19 +248,12 @@ def build_prompt_from_template(
         # query 在最后
         all_prompts = icd_prompts + [query_prompt]
     else:
-        # query 在中间，保持 JSON 序列的从左到右顺序
+        # query 在中间
         insert_pos = query_position
         all_prompts = icd_prompts[:insert_pos] + [query_prompt] + icd_prompts[insert_pos:]
     
-    # 组合prompt（参考gsm8k_prompt的前置说明）
-    front_prompt = '''Please solve the new question step by step just like the following examples. For this question:
-1. Break down the problem into logical steps
-2. Show all intermediate calculations
-3. End with a final sentence that states the result
-4. Wrap the final numeric answer in <answer> tags in the format: <answer> ### X </answer>'''
-    
-    combined_prompt = front_prompt + "\n\n" + "\n\n".join(all_prompts)
-    
+    # 4. 组合所有 prompts
+    combined_prompt = split_token.join(all_prompts)
     return combined_prompt
 
 
@@ -279,6 +269,8 @@ def test_icd_sequences(
     candidate_num: int = 10,
     sample_num: int = 10,
     mc_num: Optional[int] = None,
+    coarse_k: Optional[int] = None,  # MMLU 参数
+    mmr_lambda: Optional[float] = None,  # MMLU 参数
     
     # 评测参数（可从config读取默认值）
     config_path: str = "./configs",
@@ -334,24 +326,62 @@ def test_icd_sequences(
     
     # 从config读取默认值
     if model_path is None:
-        model_path = cfg.infer_model.get("model_path", "/home/share/model_weight/llada/LLaDA-8B-Base/")
-    if mask_length is None:
-        mask_length = cfg.infer_model.get("mask_length", 256)
+        model_path = cfg.infer_model.get("model_path")
+        if model_path is None:
+            raise ValueError("model_path must be provided via --model_path or in configs/infer_model/llada.yaml")
+    
     if mask_id is None:
-        mask_id = cfg.infer_model.get("mask_id", 126336)
+        mask_id = cfg.infer_model.get("mask_id")
+        if mask_id is None:
+            raise ValueError("mask_id must be provided via --mask_id or in configs/infer_model/llada.yaml")
+    
+    # 从 task.gen_args 读取参数（如果命令行未指定）
+    task_gen_args = cfg.task.get("gen_args", None)
+    if task_gen_args is None:
+        raise ValueError(f"task.gen_args not found in configs/task/{cfg.task.task_name}.yaml")
+    
+    # mask_length: 命令行 > task.gen_args
+    if mask_length is None:
+        if "mask_length" not in task_gen_args:
+            raise ValueError(f"mask_length not found in task.gen_args. Please set it in configs/task/{cfg.task.task_name}.yaml or via --mask_length")
+        mask_length = int(task_gen_args.mask_length)
+    
+    # block_length: 命令行 > task.gen_args
     if block_length is None:
-        block_length = cfg.infer_model.generation_kwargs.get("block_length", 128)
+        if "block_length" not in task_gen_args:
+            raise ValueError(f"block_length not found in task.gen_args. Please set it in configs/task/{cfg.task.task_name}.yaml or via --block_length")
+        block_length = int(task_gen_args.block_length)
+    
+    # gen_length: 命令行 > task.gen_args
     if gen_length is None:
-        gen_length = cfg.infer_model.generation_kwargs.get("gen_length", 128)
+        if "gen_length" not in task_gen_args:
+            raise ValueError(f"gen_length not found in task.gen_args. Please set it in configs/task/{cfg.task.task_name}.yaml or via --gen_length")
+        gen_length = int(task_gen_args.gen_length)
+    
+    # steps: 命令行 > task.gen_args
     if steps is None:
-        steps = cfg.infer_model.generation_kwargs.get("steps", 128)
+        if "steps" not in task_gen_args:
+            raise ValueError(f"steps not found in task.gen_args. Please set it in configs/task/{cfg.task.task_name}.yaml or via --steps")
+        steps = int(task_gen_args.steps)
+    
+    # temperature: 命令行 > task.gen_args (可选，有默认值)
     if temperature is None:
-        temperature = cfg.infer_model.generation_kwargs.get("temperature", 0.0)
+        if "temperature" in task_gen_args:
+            temperature = float(task_gen_args.temperature)
+        else:
+            temperature = 0.0  # 默认值
     
     print(f"   模型路径: {model_path}")
     print(f"   mask_length: {mask_length}")
     print(f"   mask_id: {mask_id}")
-    print(f"   使用格式: question: <Q>\\n<answer>\\n<A>\\n</answer> (按照utils.py格式)")
+    # 根据任务类型显示模板格式
+    if task == "gsm8k":
+        print(f"   使用格式: question: <Q>\\n<answer>\\n<A>\\n</answer> (GSM8K格式)")
+    elif task == "mmlu":
+        template_str = cfg.task.get("template", "")
+        print(f"   使用格式: {template_str} (MMLU格式，使用 PromptTemplate)")
+    else:
+        print(f"   使用格式: 根据 task.column_token_map 动态生成")
     print(f"   ICD Rank: {icd_rank} (0表示最高分，2表示第三名)")
     
     # 2. 搜索JSON文件
@@ -372,6 +402,8 @@ def test_icd_sequences(
         candidate_num=candidate_num,
         sample_num=sample_num,
         mc_num=mc_num,
+        coarse_k=coarse_k,
+        mmr_lambda=mmr_lambda,
     )
     
     if json_file is None:
@@ -393,11 +425,20 @@ def test_icd_sequences(
     
     # 4. 加载数据集
     print(f"\n📊 加载数据集...")
-    train_ds = load_gsm8k_ds(
-        version=cfg.dataset.version,
-        data_path=cfg.dataset.train_path,
-        split="train"
-    )
+    if task == "gsm8k":
+        train_ds = load_gsm8k_ds(
+            version=cfg.dataset.version,
+            data_path=cfg.dataset.train_path,
+            split="train"
+        )
+    elif task == "mmlu":
+        train_ds = load_mmlu_ds(
+            version=cfg.dataset.version,
+            data_path=cfg.dataset.train_path,
+            split="train"
+        )
+    else:
+        raise ValueError(f"Unsupported task: {task}")
     print(f"   训练集大小: {len(train_ds)}")
     
     # 5. 加载模型
@@ -421,33 +462,52 @@ def test_icd_sequences(
     model.eval()
     print("   ✅ 模型加载完成")
     
+    # 5.5. 初始化 PromptTemplate（如果任务需要）
+    prompt_template_obj = None
+    if task in ["gsm8k", "mmlu"]:
+        # 从配置中读取 prompt 相关参数
+        prompt_template_str = cfg.task.get("template", None)
+        column_token_map = cfg.task.get("column_token_map", None)
+        if column_token_map is not None:
+            column_token_map = dict(column_token_map)
+        mask_column_token_map = cfg.task.get("mask_column_token_map", None)
+        if isinstance(mask_column_token_map, dict):
+            mask_column_token_map = dict(mask_column_token_map)
+        split_token = cfg.task.get("split_token", "\n\n")
+        
+        if prompt_template_str and column_token_map:
+            prompt_template_obj = PromptTemplate(
+                prompt_template=prompt_template_str,
+                mask_token_str="<|mdm_mask|>",
+                mask_length=mask_length,
+                column_token_map=column_token_map,
+                mask_column_token_map=mask_column_token_map,
+            )
+            print(f"   ✅ PromptTemplate 初始化完成（使用模板和 column_token_map）")
+        else:
+            print(f"   ⚠️  Warning: 未提供 template 或 column_token_map，将使用旧逻辑")
+    
     # 6. 准备测试样本
     print(f"\n🎯 准备测试样本...")
     test_samples = []
     for anchor_id in anchor_ids:
         anchor_idx = int(anchor_id)
         if anchor_idx < len(train_ds):
-            anchor_sample = train_ds[anchor_idx]
-            # 提取question和answer
-            # 注意：answer字段应该包含完整的解答过程（包括####格式），用于评估
-            if 'q_a' in anchor_sample:
-                q_a = anchor_sample['q_a']
-                q_match = re.search(r'question:(.*?)(?:\n<answer>|\nAnswer:)', q_a, re.DOTALL)
-                if q_match:
-                    question = q_match.group(1).strip()
-                else:
-                    question = anchor_sample.get('question', '')
-            else:
-                question = anchor_sample.get('question', '')
+            anchor_sample = train_ds[anchor_idx].copy()  # 复制以避免修改原始数据
             
-            # 使用完整的answer字段（包含####格式），而不是从<answer>标签中提取
-            # 因为gsm8k_check需要从ground_truth中提取####格式的数字
-            answer = anchor_sample.get('answer', '')
+            # 提取 answer（用于评估）
+            if task == "gsm8k":
+                # GSM8K: answer 字段包含完整的解答过程（包括####格式）
+                answer = anchor_sample.get('answer', '')
+            elif task == "mmlu":
+                # MMLU: answer 字段已经是 "A"/"B"/"C"/"D"
+                answer = anchor_sample.get('answer', '')
+            else:
+                answer = anchor_sample.get('answer', '')
             
             test_samples.append({
                 'idx': anchor_idx,
-                'question': question,
-                'answer': answer,  # 完整的answer字段，包含####格式
+                'answer': answer,  # 用于评估的答案
                 'anchor_id': anchor_id,
                 'sample': anchor_sample  # 保存完整样本用于构建prompt
             })
@@ -459,7 +519,7 @@ def test_icd_sequences(
     # 7. 对每个anchor进行推理
     print(f"\n🚀 开始推理...")
     results = []
-    mask_token_str = "<|mdm_mask|>" * mask_length
+    split_token = cfg.task.get("split_token", "\n\n") if task in ["gsm8k", "mmlu"] else "\n\n"
     
     for test_sample in tqdm(test_samples, desc="推理进度"):
         anchor_id = test_sample['anchor_id']
@@ -480,12 +540,13 @@ def test_icd_sequences(
             # 我们需要计算它在few-shot示例中的位置（排除anchor后）
             query_position = sum(1 for idx in icd_sequence[:query_pos_in_sequence] if idx != anchor_id_int)
             
-            # 构建prompt（按照utils.py的格式）
+            # 构建prompt（使用 PromptTemplate 或旧逻辑）
             prompt_text = build_prompt_from_template(
                 icd_samples=icd_samples,
                 query_sample=test_sample['sample'],
                 query_position=query_position,
-                mask_token_str=mask_token_str
+                prompt_template=prompt_template_obj,
+                split_token=split_token,
             )
             
             # 打印prompt信息
@@ -545,44 +606,68 @@ def test_icd_sequences(
     
     # 8. 评估准确率
     print(f"\n📈 计算准确率...")
-    # 准备评估用的数据集格式
-    eval_dataset = [{'answer': s['answer']} for s in test_samples]
     
-    # 创建args对象用于eval_gsm8k
-    class Args:
-        def __init__(self):
-            # 基本评测配置
-            self.task = task
-            self.model_name = model_path
-            self.device = device
-            self.gen_length = gen_length
-            self.steps = steps
-            self.block_length = block_length
-            self.temperature = temperature
-            self.mode = mode
-            self.nshot = few_shot
-            self.query_position = 0  # 这里使用0，因为我们已经根据序列中的位置构建了prompt
-            self.icd_rank = icd_rank
-
-            # 来自 run_test_icd_sequences.sh / CLI 的 JSON 相关配置
-            self.sampler = sampler
-            self.scorer = scorer
-            self.construct_order = construct_order
-            self.beam_size = beam_size
-            self.candidate_num = candidate_num
-            self.sample_num = sample_num
-    
-    args = Args()
-    result_path = os.path.join(os.path.dirname(json_file), "test_results")
-    
-    accuracy = eval_gsm8k(
-        results=results,
-        dataset=eval_dataset,
-        result_path=result_path,
-        args=args,
-        position=0,
-        iswrite=True
-    )
+    if task == "gsm8k":
+        # GSM8K: 使用 eval_gsm8k
+        eval_dataset = [{'answer': s['answer']} for s in test_samples]
+        
+        class Args:
+            def __init__(self):
+                self.task = task
+                self.model_name = model_path
+                self.device = device
+                self.gen_length = gen_length
+                self.steps = steps
+                self.block_length = block_length
+                self.temperature = temperature
+                self.mode = mode
+                self.nshot = few_shot
+                self.query_position = 0
+                self.icd_rank = icd_rank
+                self.sampler = sampler
+                self.scorer = scorer
+                self.construct_order = construct_order
+                self.beam_size = beam_size
+                self.candidate_num = candidate_num
+                self.sample_num = sample_num
+        
+        args = Args()
+        result_path = os.path.join(os.path.dirname(json_file), "test_results")
+        
+        accuracy = eval_gsm8k(
+            results=results,
+            dataset=eval_dataset,
+            result_path=result_path,
+            args=args,
+            position=0,
+            iswrite=True
+        )
+    elif task == "mmlu":
+        # MMLU: 使用 MMLUMetrics
+        metrics = MMLUMetrics()
+        ground_truths = [s['answer'] for s in test_samples]
+        
+        # 批量评估
+        batch_result = metrics.evaluate_batch(results, ground_truths)
+        accuracy = batch_result['accuracy']
+        
+        result_path = os.path.join(os.path.dirname(json_file), "test_results")
+        os.makedirs(result_path, exist_ok=True)
+        
+        # 保存结果
+        result_file = os.path.join(result_path, f"{task}_test_results.json")
+        with open(result_file, 'w', encoding='utf-8') as f:
+            json.dump({
+                'accuracy': accuracy,
+                'correct_count': batch_result['correct_count'],
+                'total_count': batch_result['total_count'],
+                'results': batch_result['results'],
+                'generated_texts': results,
+            }, f, ensure_ascii=False, indent=2)
+        
+        print(f"   结果保存到: {result_file}")
+    else:
+        raise ValueError(f"Unsupported task for evaluation: {task}")
     
     # 9. 汇总结果
     print("\n" + "="*80)
@@ -619,6 +704,8 @@ def main():
     parser.add_argument('--sample_num', type=int, default=10, help='样本数量')
     parser.add_argument('--icd_rank', type=int, default=0, help='选择第几名score的ICD序列（0表示最高分）')
     parser.add_argument('--mc_num', type=int, default=None, help='生成时使用的 Monte Carlo 采样次数（用于精确匹配特定结果文件，可选）')
+    parser.add_argument('--coarse_k', type=int, default=None, help='MMLU 粗筛数量（用于精确匹配特定结果文件，可选）')
+    parser.add_argument('--mmr_lambda', type=float, default=None, help='MMLU MMR lambda 参数（用于精确匹配特定结果文件，可选）')
     
     # 评测参数（可选，会从config读取默认值）
     parser.add_argument('--model_path', type=str, default=None, help='模型路径')
@@ -645,6 +732,8 @@ def main():
         candidate_num=args.candidate_num,
         sample_num=args.sample_num,
         mc_num=args.mc_num,
+        coarse_k=args.coarse_k,
+        mmr_lambda=args.mmr_lambda,
         model_path=args.model_path,
         device=args.device,
         mask_length=args.mask_length,

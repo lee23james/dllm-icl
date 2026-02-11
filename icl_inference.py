@@ -22,9 +22,10 @@ if project_root not in sys.path:
 
 from open_mmicl.retriever import RandRetriever
 from open_mmicl.interface import LLaDAInterface
-from open_mmicl.metrics import GSM8KMetrics
+from open_mmicl.metrics import GSM8KMetrics, MMLUMetrics
 from open_mmicl.icl_interface import DLLMICLInferencer
-from lever_lm.load_ds_utils import load_gsm8k_ds
+from lever_lm.load_ds_utils import load_gsm8k_ds, load_mmlu_ds
+from utils import load_ds
 #这里是第二阶段,需要进行推理(其实也需要batch和分类)
 #这里我并没有进行详细的检查
 
@@ -51,6 +52,10 @@ def main(cfg: DictConfig):
             data_path=cfg.dataset.test_path,
             split="validation",  # 注意：test数据可能存储在validation split中
         )
+    elif cfg.task.task_name == "mmlu":
+        # MMLU 任务：使用 load_ds 统一接口
+        train_ds = load_ds(cfg, split="train")
+        test_ds = load_ds(cfg, split="validation")  # MMLU 的 test 数据在 validation split
     else:
         raise ValueError(f"Unsupported task: {cfg.task.task_name}")
     
@@ -61,8 +66,7 @@ def main(cfg: DictConfig):
     logger.info("Initializing model and tokenizer...")
     try:
         import torch
-        from transformers import AutoTokenizer
-        from model.modeling_llada import LLaDAModelLM
+        from transformers import AutoTokenizer, AutoModel
         
         # 获取模型路径
         model_path = cfg.infer_model.get("model_path", None)
@@ -75,6 +79,7 @@ def main(cfg: DictConfig):
             )
         
         logger.info(f"Loading model from {model_path}...")
+        logger.info("Using AutoModel to load from model directory (will use modeling_llada.py from model directory)")
         
         # 准备模型参数
         model_kwargs = {
@@ -83,8 +88,12 @@ def main(cfg: DictConfig):
             "local_files_only": cfg.infer_model.get("local_files_only", True),
         }
         
-        # 加载模型
-        model = LLaDAModelLM.from_pretrained(model_path, **model_kwargs)
+        # 使用 AutoModel 从模型目录加载，这样会使用模型目录中的 modeling_llada.py
+        # 而不是项目中的 model/modeling_llada.py
+        model = AutoModel.from_pretrained(
+            model_path,
+            **model_kwargs,
+        )
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
         model.eval()
@@ -151,7 +160,12 @@ def main(cfg: DictConfig):
     
     # 5. 初始化评估器
     logger.info("Initializing metrics...")
-    metrics = GSM8KMetrics()
+    if cfg.task.task_name == "gsm8k":
+        metrics = GSM8KMetrics()
+    elif cfg.task.task_name == "mmlu":
+        metrics = MMLUMetrics()
+    else:
+        raise ValueError(f"Unsupported task for metrics: {cfg.task.task_name}")
     
     # 6. 执行推理
     logger.info("Starting inference...")
