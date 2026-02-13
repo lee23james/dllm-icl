@@ -152,85 +152,72 @@ def encode_text_qwen(
     Returns:
         features: torch.Tensor, shape=(N, D)，其中 N 是文本数量，D 是向量维度
     """
-    logger.info(f"Loading Qwen embedding model: {model_name} on {device}")
-    
-    # 加载 Qwen 模型
-    # 注意：Qwen3-Embedding-4B 可能需要特定的加载方式
-    # 如果模型名称包含 "embedding" 或 "Embedding"，尝试使用特定的加载方式
+    # 简化实现：强制使用 SentenceTransformer 加载 Qwen3-Embedding。
+    # 不做 transformers 版本的硬限制，只有在实际出现 qwen3 相关错误时再提示升级。
     try:
-        model = AutoModel.from_pretrained(
-            model_name,
-            trust_remote_code=True,
-            torch_dtype=torch.float16 if device.startswith("cuda") else torch.float32,
-        )
-        model.to(device)
-        model.eval()
-        logger.info(f"Successfully loaded model: {model_name}")
-    except Exception as e:
-        logger.error(f"Failed to load model {model_name}: {e}")
-        # 尝试使用 Qwen3-Embedding-0.6B 作为备选
-        logger.info("Trying alternative model: Qwen/Qwen3-Embedding-0.6B")
+        import importlib.metadata as importlib_metadata
+    except ImportError:  # pragma: no cover - 极老环境
+        import importlib_metadata  # type: ignore
+
+    # 检查 sentence-transformers 是否可用（仍按官方建议做版本检查）
+    try:
+        from sentence_transformers import SentenceTransformer  # type: ignore
         try:
-            model_name = "Qwen/Qwen3-Embedding-0.6B"
-            model = AutoModel.from_pretrained(
-                model_name,
-                trust_remote_code=True,
-                torch_dtype=torch.float16 if device.startswith("cuda") else torch.float32,
-            )
-            model.to(device)
-            model.eval()
-            logger.info(f"Successfully loaded fallback model: {model_name}")
-        except Exception as e2:
-            logger.error(f"Failed to load fallback model: {e2}")
-            raise RuntimeError(f"Failed to load any Qwen model. Original error: {e}, Fallback error: {e2}")
-    
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    
-    all_embeddings = []
-    
-    logger.info(f"Encoding {len(text_list)} texts with batch_size={batch_size}...")
-    
-    for start_idx in tqdm(range(0, len(text_list), batch_size), desc="Encoding texts"):
-        end_idx = min(start_idx + batch_size, len(text_list))
-        batch_texts = text_list[start_idx:end_idx]
-        
-        # Tokenize
-        inputs = tokenizer(
-            batch_texts,
-            padding=True,
-            truncation=True,
-            max_length=512,
-            return_tensors="pt",
-        ).to(device)
-        
-        # 获取 embeddings
-        # Qwen 模型通常使用 last_hidden_state 的 mean pooling
-        outputs = model(**inputs)
-        
-        # 提取 embeddings（使用 mean pooling）
-        if hasattr(outputs, "last_hidden_state"):
-            # Mean pooling
-            attention_mask = inputs["attention_mask"]
-            embeddings = outputs.last_hidden_state
-            mask_expanded = attention_mask.unsqueeze(-1).expand(embeddings.size()).float()
-            embeddings = (embeddings * mask_expanded).sum(1) / mask_expanded.sum(1).clamp(min=1e-9)
-        elif hasattr(outputs, "pooler_output"):
-            embeddings = outputs.pooler_output
-        else:
-            # 如果都没有，使用第一个 token 的 embedding
-            embeddings = outputs.last_hidden_state[:, 0, :]
-        
-        # L2 归一化
-        if normalize:
-            embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
-        
-        all_embeddings.append(embeddings.cpu())
-    
-    # 拼接所有 embeddings
-    features = torch.cat(all_embeddings, dim=0).to(torch.float32)
-    
+            st_ver = importlib_metadata.version("sentence-transformers")
+        except Exception:
+            st_ver = "0.0.0"
+    except ImportError as e:
+        raise ImportError(
+            "需要安装 sentence-transformers>=2.7.0 才能使用 Qwen3-Embedding 作为 SentenceTransformer。\n"
+            "请执行: pip install 'sentence-transformers>=2.7.0'"
+        ) from e
+
+    def _parse_ver(v: str) -> tuple:
+        parts = v.split(".")
+        return tuple(int(p) for p in parts[:3] if p.isdigit())
+
+    if _parse_ver(st_ver) < _parse_ver("2.7.0"):
+        raise RuntimeError(
+            f"Qwen3-Embedding 需要 sentence-transformers>=2.7.0，当前为 {st_ver}。"
+            "请执行: pip install 'sentence-transformers>=2.7.0'"
+        )
+
+    try:
+        logger.info(f"Loading SentenceTransformer model: {model_name} on {device}")
+        # 对齐官方推荐：显式传入 model_kwargs / tokenizer_kwargs
+        model = SentenceTransformer(
+            model_name,
+            device=device,
+            model_kwargs={
+                # 官方建议：使用 flash_attention_2 提升速度与显存效率
+                "attn_implementation": "flash_attention_2",
+            },
+            tokenizer_kwargs={
+                # 官方建议：embedding 模型使用 left padding
+                "padding_side": "left",
+            },
+        )
+
+        logger.info(f"Encoding {len(text_list)} texts with SentenceTransformer, batch_size={batch_size}...")
+        embeddings = model.encode(
+            text_list,
+            batch_size=batch_size,
+            convert_to_tensor=True,
+            normalize_embeddings=normalize,
+            show_progress_bar=True,
+        )
+    except Exception as e:
+        msg = str(e)
+        # 如果底层是 transformers 不认识 qwen3 之类的问题，再提示升级 transformers
+        if "qwen3" in msg.lower() or "KeyError: 'qwen3'" in msg or "KeyError(\"qwen3" in msg:
+            raise RuntimeError(
+                "检测到底层 transformers 对 `qwen3` 架构不兼容，"
+                "建议在当前环境中执行: pip install 'transformers>=4.51.0'"
+            ) from e
+        raise
+
+    features = embeddings.to(torch.float32).cpu()
     logger.info(f"Encoded {len(text_list)} texts into features with shape {features.shape}")
-    
     return features
 
 

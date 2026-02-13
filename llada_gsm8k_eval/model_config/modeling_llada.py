@@ -1455,6 +1455,15 @@ class LLaDAModelLM(PreTrainedModel):
             self.model = LLaDAModel(model_config, init_params=init_params)
         else:
             self.model = model
+        
+        # 初始化 all_tied_weights_keys 属性（transformers 库需要）
+        # 这个属性用于跟踪哪些权重被绑定了（tied weights）
+        if not hasattr(self, 'all_tied_weights_keys'):
+            self.all_tied_weights_keys = {}
+        
+        # 如果配置了 weight_tying，调用 tie_weights 来设置绑定权重
+        if config.weight_tying:
+            self.tie_weights()
 
     def forward(
         self,
@@ -1555,8 +1564,18 @@ class LLaDAModelLM(PreTrainedModel):
             self.model.transformer.ff_out = value
 
     def tie_weights(self):
+        """
+        绑定输入和输出嵌入层的权重（如果启用了 weight_tying）
+        同时更新 all_tied_weights_keys 以符合 transformers 库的要求
+        """
         if self.config.weight_tying:
             self.model.transformer.ff_out = self.model.transformer.wte
+            # 更新 all_tied_weights_keys，记录绑定的权重
+            # 这是 transformers 库在 mark_tied_weights_as_initialized() 中需要的
+            if not hasattr(self, 'all_tied_weights_keys'):
+                self.all_tied_weights_keys = {}
+            # 记录输出嵌入层绑定到输入嵌入层
+            self.all_tied_weights_keys['model.transformer.ff_out.weight'] = 'model.transformer.wte.weight'
 
 # Register the model so that it is available for transformer pipelines, auto-loading, etc.
 # AutoModel.register(LLaDAConfig, LLaDAModelLM)

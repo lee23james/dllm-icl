@@ -13,7 +13,7 @@ from time import sleep
 import torch
 import torch.multiprocessing as mp
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from loguru import logger
 from tqdm import tqdm
 from datasets import Dataset
@@ -105,8 +105,11 @@ def init_interface(cfg: DictConfig, device: str):
         interface对象
     """
     import torch
-    from transformers import AutoTokenizer, AutoModel
+    from transformers import AutoTokenizer
     from open_mmicl.interface import LLaDAInterface
+    # 使用本地实现的 LLaDAModelLM（带 post_init / all_tied_weights_keys 兼容逻辑）
+    # 权重仍然从 infer_model.model_path 指定的目录加载（见 configs/infer_model/llada.yaml）
+    from model.model_llada import LLaDAModelLM
     
     # 获取模型路径（优先从 infer_model.model_path，其次从 infer_model.model_name）
     model_path = cfg.infer_model.get("model_path", None)
@@ -119,7 +122,7 @@ def init_interface(cfg: DictConfig, device: str):
         )
     
     logger.info(f"Loading LLaDA model from {model_path} on {device}...")
-    logger.info("Using AutoModel to load from model directory (will use modeling_llada.py from model directory)")
+    logger.info("Using local LLaDAModelLM (model/model_llada.py) with weights from model_path")
     
     # 设置设备
     torch_device = torch.device(device if torch.cuda.is_available() else "cpu")
@@ -131,9 +134,9 @@ def init_interface(cfg: DictConfig, device: str):
         "local_files_only": cfg.infer_model.get("local_files_only", True),
     }
     
-    # 使用 AutoModel 从模型目录加载，这样会使用模型目录中的 modeling_llada.py
-    # 而不是项目中的 model/modeling_llada.py
-    model = AutoModel.from_pretrained(
+    # 使用本地的 LLaDAModelLM.from_pretrained，而不是 AutoModel.from_pretrained。
+    # 这样结构代码走本地实现，权重仍然来自模型目录，兼容 transformers==5.1.0。
+    model = LLaDAModelLM.from_pretrained(
         model_path,
         **model_kwargs,
     )
@@ -336,25 +339,52 @@ def _main_impl(cfg: DictConfig):
     train_ds = load_ds(cfg, "train")
     logger.info(f"Train dataset size: {len(train_ds)}")
     
-    # 2. 使用sampler生成anchor和candidate_set
+    # 2. 使用 sampler 生成 anchor 和 candidate_set（由 generate_data.yaml defaults 指定，如 sampler/text_sim_qwen_mmr）
     logger.info("Sampling anchor set and candidate sets...")
-    # 尝试使用hydra instantiate，如果不支持则回退到手动实例化
     try:
-        sampler = hydra.utils.instantiate(cfg.sampler, index_ds_len=len(train_ds), dataset_name=cfg.task.task_name)
-        # 检查返回的是否是可调用对象，如果不是则回退到手动实例化
-        if not callable(sampler) or isinstance(sampler, type(cfg.sampler)):
+        sampler = hydra.utils.instantiate(
+            cfg.sampler,
+            index_ds_len=len(train_ds),
+            dataset_name=cfg.task.task_name,
+        )
+        if not callable(sampler):
             raise ValueError("hydra instantiate returned non-callable object")
+        logger.info(f"Sampler instantiated via Hydra: {type(sampler).__name__}")
     except Exception as e:
-        logger.warning(f"Failed to instantiate sampler with hydra, using manual instantiation: {e}")
-    sampler = RandSampler(
-        candidate_num=cfg.sampler.candidate_num,
-        sampler_name=cfg.sampler.sampler_name,
-        anchor_sample_num=cfg.sampler.anchor_sample_num,
-        index_ds_len=len(train_ds),
-        dataset_name=cfg.task.task_name,
-        cache_dir=cfg.sampler.cache_dir,
-        overwrite=cfg.sampler.overwrite,
-    )
+        logger.warning(
+            f"Failed to instantiate sampler with hydra, falling back to RandSampler: {e}"
+        )
+        # 兜底时若 cfg.sampler 不可用（如配置未加载），只用根配置/默认值并打警告
+        sampler_cfg = getattr(cfg, "sampler", None)
+        if sampler_cfg is None:
+            logger.warning(
+                "cfg.sampler is missing (config may be incomplete), using root/default values for RandSampler"
+            )
+        try:
+            candidate_num = sampler_cfg.get("candidate_num", cfg.get("candidate_num", 64)) if sampler_cfg is not None else cfg.get("candidate_num", 64)
+            sampler_name = sampler_cfg.get("sampler_name", "random_sampler") if sampler_cfg is not None else "random_sampler"
+            anchor_sample_num = sampler_cfg.get("anchor_sample_num", cfg.get("anchor_sample_num", 100)) if sampler_cfg is not None else cfg.get("anchor_sample_num", 100)
+            cache_dir = sampler_cfg.get("cache_dir", "./cache") if sampler_cfg is not None else "./cache"
+            overwrite = sampler_cfg.get("overwrite", False) if sampler_cfg is not None else False
+        except Exception as cfg_err:
+            logger.warning(
+                f"Could not read sampler params from config, using defaults: {cfg_err}"
+            )
+            candidate_num = 64
+            sampler_name = "random_sampler"
+            anchor_sample_num = 100
+            cache_dir = "./cache"
+            overwrite = False
+        sampler = RandSampler(
+            candidate_num=candidate_num,
+            sampler_name=sampler_name,
+            anchor_sample_num=anchor_sample_num,
+            index_ds_len=len(train_ds),
+            dataset_name=cfg.task.task_name,
+            cache_dir=cache_dir,
+            overwrite=overwrite,
+        )
+        logger.info("Sampler fallback instantiated: RandSampler")
     
     sampler_result = sampler(train_ds)
     logger.info(f"Anchor set size: {len(sampler_result['anchor_set'])}")

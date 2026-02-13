@@ -10,7 +10,7 @@ python /home/lzh/llada-icl/test_icd_sequences.py \
   --beam_size 5 \
   --few_shot 4 \
   --candidate_num 64 \
-  --sample_num 100 \
+  --sample_num 200 \
   --mc_num 1 \
   --coarse_k 200 \
   --mmr_lambda 0.1 \

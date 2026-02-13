@@ -10,7 +10,7 @@ candidate_num: ${candidate_num}
 anchor_sample_num: ${anchor_sample_num}
 
 # 缓存与特征参数
-cache_dir: "./cache/mmlu"        # 建议为不同数据集使用不同 cache 目录
+cache_dir: "./cache/${dataset.name}"        # 建议为不同数据集使用不同 cache 目录
 overwrite: false                 # 是否覆盖已有的候选集 / 特征缓存
 
 # SBERT 模型与文本字段

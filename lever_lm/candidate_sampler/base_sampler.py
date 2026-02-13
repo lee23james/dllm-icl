@@ -38,10 +38,14 @@ class BaseSampler:
             cache_dir, f'{dataset_name}-anchor_sample_num:{self.anchor_sample_num}.json'
         )
         #只要缓存方法改变,就会选择不同的数据集进行加载
+        # cache 文件名中追加 other_info（比如 coarse_k / lambda 等），用于区分不同配置的缓存
+        # 注意 Python 运算优先级：原来写成 `'-' if other_info else '' + other_info`
+        # 实际在 other_info 非空时只会得到 '-'，不会拼上真正的内容，这里修正为正确的括号形式。
+        suffix = f"-{other_info}" if other_info else ""
         cache_fn = (
             f"{dataset_name}-{self.sampler_name}-"
             f"anchor_sample_num: {self.anchor_sample_num}:{self.candidate_num}"
-            f"{'-' if other_info else '' + other_info}.json"
+            f"{suffix}.json"
         )
         self.cache_file = os.path.join(self.cache_dir, cache_fn)
         self.index_ds_len = index_ds_len

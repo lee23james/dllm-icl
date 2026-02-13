@@ -517,20 +517,6 @@ def alibi_attention_bias(seq_len: int, config: ModelConfig, device: torch.device
     # shape: (1, n_heads, seq_len, seq_len)
     return alibi_bias * (1.0 / (2 ** m.view(1, config.n_heads, 1, 1)))  # type: ignore
 
-def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
-    """
-    This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
-    num_key_value_heads, seqlen, head_dim) to (batch, num_attention_heads, seqlen, head_dim)
-    """
-    batch, num_key_value_heads, slen, head_dim = hidden_states.shape
-    if n_rep == 1:
-        return hidden_states
-    hidden_states = hidden_states[:, :, None, :, :].expand(
-        batch, num_key_value_heads, n_rep, slen, head_dim
-    )
-    return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
-
-
 
 class LLaDABlock(nn.Module):
     """
@@ -643,72 +629,34 @@ class LLaDABlock(nn.Module):
         attn_mask: Optional[torch.Tensor] = None,
         dropout_p: float = 0.0,
         is_causal: bool = False,
-        return_attn_weights: bool = True,  # 添加此参数
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:  # 修改返回类型注解
+    ) -> torch.Tensor:
         """
         Computes scaled dot product attention on query, key and value tensors, using an optional
         attention mask if passed, and applying dropout if a probability greater than 0.0 is specified.
         """
-        # if self.flash_attn_func is not None and attn_mask is None and not return_attn_weights:
-        #     # FlashAttention 路径，且不需要权重
-        #     r = self.flash_attn_func(
-        #         q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), dropout_p=dropout_p, causal=False
-        #     )
-        #     return r.transpose(1, 2), None
-        # else:
-        #     # torch's sdpa doesn't support GQA, so we're doing this
-        #     assert k.size(1) == v.size(1)
-        #     num_kv_heads = k.size(1)
-        #     num_q_heads = q.size(1)
-        #     if num_q_heads != num_kv_heads:
-        #         assert num_q_heads % num_kv_heads == 0
-        #         k = k.repeat_interleave(num_q_heads // num_kv_heads, dim=1, output_size=num_q_heads)
-        #         v = v.repeat_interleave(num_q_heads // num_kv_heads, dim=1, output_size=num_q_heads)
-
-        #     # 在 float32 精度下计算整个注意力
-        #     with torch.autocast(enabled=False, device_type=q.device.type):
-        #         attn_scores = q.float() @ k.transpose(-2, -1).float() / math.sqrt(q.size(-1))
-        #         attn_weight = torch.softmax(attn_scores, dim=-1)
-        #         attn_weight = torch.nn.functional.dropout(attn_weight, p=dropout_p)
-        #         #
-        #         # 使用原始精度的 v，避免将 v 升到 float32 导致显存占用上升
-        #         # attn_output = (attn_weight @ v.float()).to(q.dtype)
-        #         attn_output = (attn_weight.to(v.dtype) @ v).to(q.dtype)
-        #         # # 使用原始 SDPA 计算输出
-        #         # attn_output = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=dropout_p, is_causal=False)
-
-        # if return_attn_weights:       
-        #     return attn_output, attn_weight
-        # else:
-        #     return attn_output, None
-        num_kv_heads=k.size(1)
-        num_heads=q.size(1)
-        k=repeat_kv(k,n_rep=num_heads//num_kv_heads)
-        v=repeat_kv(v,n_rep=num_heads//num_kv_heads)
-
-        if return_attn_weights:
-            attn_weights=torch.matmul(q,k.transpose(2, 3))/math.sqrt(q.size(-1))
-            if attn_mask is not None:
-                causal_mask=attn_mask[:, :, :, : k.shape[-2]]
-                attn_weights=attn_weights+causal_mask
-
-            attn_weights = nn.functional.softmax(
-                attn_weights, dim=-1, dtype=torch.float32
-            ).to(q.dtype)
-            attn_weights=nn.functional.dropout(attn_weights,p=dropout_p,training=self.training)
-            return torch.matmul(attn_weights, v), attn_weights
+        if self.flash_attn_func is not None and attn_mask is None:
+            r = self.flash_attn_func(
+                q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), dropout_p=dropout_p, causal=False
+            )
+            return r.transpose(1, 2)
         else:
+            # torch's sdpa doesn't support GQA, so we're doing this
+            assert k.size(1) == v.size(1)
+            num_kv_heads = k.size(1)
+            num_q_heads = q.size(1)
+            if num_q_heads != num_kv_heads:
+                assert num_q_heads % num_kv_heads == 0
+                k = k.repeat_interleave(num_q_heads // num_kv_heads, dim=1, output_size=num_q_heads)
+                v = v.repeat_interleave(num_q_heads // num_kv_heads, dim=1, output_size=num_q_heads)
+
             # Modify: MDM set causal to False, and with no attn_mask.
-            return (
-                F.scaled_dot_product_attention(
-                    q,
-                    k,
-                    v,
-                    attn_mask=attn_mask,
-                    dropout_p=dropout_p,
-                    is_causal=False,
-                ),
-                None,
+            return F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=None,
+                dropout_p=dropout_p,
+                is_causal=False,
             )
 
     def attention(
@@ -719,7 +667,7 @@ class LLaDABlock(nn.Module):
         attention_bias: Optional[torch.Tensor] = None,
         layer_past: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         use_cache: bool = False,
-    ) -> Tuple[Tuple[torch.Tensor, Optional[torch.Tensor]], Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+    ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         B, T, C = q.size()  # batch size, sequence length, d_model
         dtype = k.dtype
 
@@ -760,8 +708,7 @@ class LLaDABlock(nn.Module):
 
         # Get the attention scores.
         # shape: (B, nh, T, hs)
-    # --- 修改点: 现在接收一个元组 (attn_output, attn_weights) ---
-        att_output, att_weights = self._scaled_dot_product_attention(
+        att = self._scaled_dot_product_attention(
             q,
             k,
             v,
@@ -771,10 +718,10 @@ class LLaDABlock(nn.Module):
         )
 
         # Re-assemble all head outputs side-by-side.
-        att_output = att_output.transpose(1, 2).contiguous().view(B, T, C)
+        att = att.transpose(1, 2).contiguous().view(B, T, C)
 
         # Apply output projection.
-        return (self.attn_out(att_output), att_weights), present
+        return self.attn_out(att), present
 
     @abstractmethod
     def forward(
@@ -840,7 +787,7 @@ class LLaDASequentialBlock(LLaDABlock):
         attention_bias: Optional[torch.Tensor] = None,
         layer_past: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         use_cache: bool = False,
-    ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         # Get query, key, value projections.
         # shape:
         #  - for regular attn q, k, v: (batch_size, seq_len, d_model)
@@ -857,15 +804,15 @@ class LLaDASequentialBlock(LLaDABlock):
 
         # Get attention scores.
         if self._activation_checkpoint_fn is not None:
-            (att_output, att_weights), cache = self._activation_checkpoint_fn(  # type: ignore
+            att, cache = self._activation_checkpoint_fn(  # type: ignore
                 self.attention, q, k, v, attention_bias, layer_past=layer_past, use_cache=use_cache
             )
         else:
-            (att_output, att_weights), cache = self.attention(q, k, v, attention_bias, layer_past=layer_past, use_cache=use_cache)
+            att, cache = self.attention(q, k, v, attention_bias, layer_past=layer_past, use_cache=use_cache)
 
         # Add attention scores.
         # shape: (B, T, C)
-        x = x + self.dropout(att_output)
+        x = x + self.dropout(att)
 
         # Add feed-forward projection.
         # shape: (batch_size, seq_len, d_model)
@@ -883,7 +830,7 @@ class LLaDASequentialBlock(LLaDABlock):
         x = self.dropout(x)
         x = og_x + x
 
-        return x, cache, att_weights
+        return x, cache
 
 
 class LLaDALlamaBlock(LLaDABlock):
@@ -942,7 +889,7 @@ class LLaDALlamaBlock(LLaDABlock):
         attention_bias: Optional[torch.Tensor] = None,
         layer_past: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         use_cache: bool = False,
-    ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         # Get query, key, value projections.
         # shape:
         #  - for regular attn q, k, v: (batch_size, seq_len, d_model)
@@ -957,15 +904,15 @@ class LLaDALlamaBlock(LLaDABlock):
 
         # Get attention scores.
         if self._activation_checkpoint_fn is not None:
-            (att_output, att_weights), cache = self._activation_checkpoint_fn(  # type: ignore
+            att, cache = self._activation_checkpoint_fn(  # type: ignore
                 self.attention, q, k, v, attention_bias, layer_past=layer_past, use_cache=use_cache
             )
         else:
-            (att_output, att_weights), cache = self.attention(q, k, v, attention_bias, layer_past=layer_past, use_cache=use_cache)
+            att, cache = self.attention(q, k, v, attention_bias, layer_past=layer_past, use_cache=use_cache)
 
         # Add attention scores.
         # shape: (B, T, C)
-        x = x + self.dropout(att_output)
+        x = x + self.dropout(att)
 
         # Add feed-forward projection.
         # shape: (batch_size, seq_len, d_model)
@@ -984,7 +931,7 @@ class LLaDALlamaBlock(LLaDABlock):
         x = self.dropout(x)
         x = og_x + x
 
-        return x, cache, att_weights
+        return x, cache
 
 
 class LLaDAOutput(NamedTuple):
@@ -1003,7 +950,6 @@ class LLaDAOutput(NamedTuple):
     """
     Hidden states from each block.
     """
-    attentions: Optional[Tuple[torch.Tensor]] = None # <--- 新增字段
 
 
 class LLaDAGenerateOutput(NamedTuple):
@@ -1222,7 +1168,6 @@ class LLaDAModel(nn.Module):
         use_cache: bool = False,
         last_logits_only: bool = False,
         output_hidden_states: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,  # 新增参数
     ) -> LLaDAOutput:
         """
         :param input_ids: A tensor of shape `(batch_size, seq_len)`.
@@ -1338,9 +1283,6 @@ class LLaDAModel(nn.Module):
         # decoder layers
         all_hidden_states = []
 
-        # --- 新增: 初始化一个元组来收集所有注意力权重 ---
-        all_attentions = () if output_attentions else None
-
         # Apply blocks one-by-one.
         if self.config.block_group_size == 1:
             for block_idx, block in enumerate(self.transformer.blocks):
@@ -1365,18 +1307,12 @@ class LLaDAModel(nn.Module):
                     )
                 ):
                     # shape: (batch_size, seq_len, d_model)
-                    x, cache, att_weights = self._activation_checkpoint_fn(
+                    x, cache = self._activation_checkpoint_fn(
                         block, x, attention_bias=attention_bias, layer_past=layer_past, use_cache=use_cache
                     )
                 else:
                     # shape: (batch_size, seq_len, d_model)
-                    x, cache, att_weights = block(x, attention_bias=attention_bias, layer_past=layer_past, use_cache=use_cache)
-                
-                # --- 新增: 如果需要，就收集注意力权重 ---
-                if output_attentions:
-                    all_attentions = all_attentions + (att_weights,)
-                
-                
+                    x, cache = block(x, attention_bias=attention_bias, layer_past=layer_past, use_cache=use_cache)
                 if attn_key_values is not None:
                     assert cache is not None
                     attn_key_values.append(cache)
@@ -1393,7 +1329,7 @@ class LLaDAModel(nn.Module):
                         group_idx * self.config.block_group_size : (group_idx + 1) * self.config.block_group_size
                     ]
                 )
-                x, cache, att_weights = block_group(
+                x, cache = block_group(
                     x, attention_bias=attention_bias, layers_past=layers_past, use_cache=use_cache
                 )
                 if attn_key_values is not None:
@@ -1420,7 +1356,7 @@ class LLaDAModel(nn.Module):
         if self.config.scale_logits:
             logits.mul_(1 / math.sqrt(self.config.d_model))
 
-        return LLaDAOutput(logits=logits, attn_key_values=attn_key_values, hidden_states=tuple(all_hidden_states) if output_hidden_states else None, attentions=all_attentions if output_attentions else None)  # type: ignore[arg-type]
+        return LLaDAOutput(logits=logits, attn_key_values=attn_key_values, hidden_states=tuple(all_hidden_states) if output_hidden_states else None)  # type: ignore[arg-type]
 
 
 def create_model_config_from_pretrained_config(config: LLaDAConfig):
@@ -1455,18 +1391,9 @@ class LLaDAModelLM(PreTrainedModel):
             self.model = LLaDAModel(model_config, init_params=init_params)
         else:
             self.model = model
-        
-        # transformers >=4.51.0 在加载模型时会调用 mark_tied_weights_as_initialized()，
-        # 该方法需要访问 all_tied_weights_keys 属性。
-        # PreTrainedModel 基类在某些版本中可能不会自动初始化这个属性，
-        # 所以我们需要手动初始化以确保兼容性。
-        # 注意：这个属性不是模型权重的一部分，而是运行时属性。
-        if not hasattr(self, 'all_tied_weights_keys'):
-            self.all_tied_weights_keys = {}
-        
-        # 如果配置了 weight_tying，调用 tie_weights 来设置绑定权重
-        if config.weight_tying:
-            self.tie_weights()
+            
+        # Required by transformers: sets all_tied_weights_keys, runs init_weights, etc.
+        self.post_init()
 
     def forward(
         self,
@@ -1480,14 +1407,15 @@ class LLaDAModelLM(PreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-        cache_position: Optional[Cache] = None, 
-         # This is a hack mitigation of an issue in transformers `4.39.x`
+        cache_position: Optional[Cache] = None,  # This is a hack mitigation of an issue in transformers `4.39.x`
     ) -> Union[Tuple, CausalLMOutputWithPast]:
-        if use_cache is None:
-            use_cache = self.config.use_cache
+        # 我们自己的 LLaDAModel 不支持 kvcache（在 LLaDAModel.forward 里有断言），
+        # 所以这里统一关闭 use_cache，避免访问 config.use_cache 这种在老权重里不存在的字段。
+        # transformers 在生成时仍可以正常工作，因为底层不会使用 past_key_values。
+        use_cache = False
 
-        # 遵循HuggingFace的惯例
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        if output_attentions:
+            raise ValueError("output_attentions is not yet supported in LLaDA")
 
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -1499,14 +1427,11 @@ class LLaDAModelLM(PreTrainedModel):
             attention_bias=attention_bias,
             past_key_values=past_key_values,
             use_cache=use_cache,
-            output_attentions=output_attentions, # <--- 传递给底层模型
             output_hidden_states=output_hidden_states,
         )
 
         logits = outputs.logits
         hidden_states = outputs.hidden_states
-        attentions = outputs.attentions # <--- 从底层模型接收注意力权重
-
 
         loss = None
         if labels is not None:
@@ -1520,7 +1445,6 @@ class LLaDAModelLM(PreTrainedModel):
             logits=logits,
             past_key_values=outputs.attn_key_values,
             hidden_states=hidden_states,
-            attentions=attentions,
         )
 
     def can_generate(self) -> bool:
@@ -1566,23 +1490,23 @@ class LLaDAModelLM(PreTrainedModel):
         else:
             self.model.transformer.ff_out = value
 
-    def tie_weights(self):
+    def tie_weights(self, *args, **kwargs):
         """
-        绑定输入和输出嵌入层的权重（如果启用了 weight_tying）
-        同时更新 all_tied_weights_keys 以符合 transformers 库的要求
+        兼容 transformers>=5.1.0 的 tie_weights 接口。
+        - transformers 可能会以 tie_weights(recompute_mapping=False, missing_keys=...)
+          的形式调用；这里用 *args, **kwargs 吃掉所有新参数。
+        - 先调用父类实现，让 transformers 自己更新内部映射（all_tied_weights_keys 等），
+          再执行我们自己的权重共享逻辑。
         """
+        out = super().tie_weights(*args, **kwargs)
+
         if self.config.weight_tying:
-            self.model.transformer.ff_out = self.model.transformer.wte
-            # 更新 all_tied_weights_keys，记录绑定的权重
-            # 这是 transformers 库在 mark_tied_weights_as_initialized() 中需要的
-            if not hasattr(self, 'all_tied_weights_keys'):
-                self.all_tied_weights_keys = {}
-            # 记录输出嵌入层绑定到输入嵌入层
-            self.all_tied_weights_keys['model.transformer.ff_out.weight'] = 'model.transformer.wte.weight'
+            # 我们自己的权重绑定逻辑：输出层与输入 embedding 共享权重
+            if hasattr(self.model.transformer, "ff_out"):
+                self.model.transformer.ff_out = self.model.transformer.wte
+
+        return out
 
 # Register the model so that it is available for transformer pipelines, auto-loading, etc.
 # AutoModel.register(LLaDAConfig, LLaDAModelLM)
-
-print("modeling_llada.py loaded")
-print("modeling_llada.py loaded")
-print("modeling_llada.py loaded")
+print("model_llada.py loaded")

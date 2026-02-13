@@ -3,7 +3,7 @@
 defaults:
   - task/mmlu
   - dataset/mmlu
-  - sampler/text_sim_qwen_mmr
+  - sampler/random
   - infer_model/llada
 
 # 生成参数

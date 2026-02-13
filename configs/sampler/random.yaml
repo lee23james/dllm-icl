@@ -4,5 +4,7 @@ sampler_name: "random_sampler"
 # 引用父配置 generate_data.yaml 中的参数
 candidate_num: ${candidate_num}  # 候选集大小，从 generate_data.yaml 继承
 anchor_sample_num: ${anchor_sample_num}  # anchor数量，从 generate_data.yaml 继承
-cache_dir: "./cache/gsm8k"
+# 根据当前任务/数据集自动选择 cache 目录，比如 mmlu/gsm8k 等
+# 这里用 dataset.name（见 configs/dataset/*.yaml），生成形如 ./cache/mmlu
+cache_dir: "./cache/${dataset.name}"
 overwrite: false  # 是否覆盖缓存
