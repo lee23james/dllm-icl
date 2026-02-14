@@ -26,7 +26,8 @@ project_root = os.path.dirname(current_script_path)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer
+from model.model_llada import LLaDAModelLM
 from utils.eval_utils import gsm8k_check, eval_gsm8k
 from lever_lm.load_ds_utils import load_gsm8k_ds, load_mmlu_ds
 from open_mmicl.prompt_template import PromptTemplate
@@ -452,11 +453,12 @@ def test_icd_sequences(
         local_files_only=True
     )
     
-    model = AutoModel.from_pretrained(
+    # 使用本地 LLaDAModelLM（含 all_tied_weights_keys 兼容），与 generate_data_main 一致，避免 transformers 版本差异报错
+    model = LLaDAModelLM.from_pretrained(
         model_path,
         trust_remote_code=True,
         local_files_only=True,
-        torch_dtype=torch.bfloat16
+        torch_dtype=torch.bfloat16,
     )
     model.to(device)
     model.eval()
