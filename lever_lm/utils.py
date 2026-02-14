@@ -184,20 +184,12 @@ def encode_text_qwen(
 
     try:
         logger.info(f"Loading SentenceTransformer model: {model_name} on {device}")
-        # 对齐官方推荐：显式传入 model_kwargs / tokenizer_kwargs
+        # 只设置 padding_side，不传 attn_implementation 等，使用库默认行为
         model = SentenceTransformer(
             model_name,
             device=device,
-            model_kwargs={
-                # 官方建议：使用 flash_attention_2 提升速度与显存效率
-                "attn_implementation": "flash_attention_2",
-            },
-            tokenizer_kwargs={
-                # 官方建议：embedding 模型使用 left padding
-                "padding_side": "left",
-            },
+            tokenizer_kwargs={"padding_side": "left"},
         )
-
         logger.info(f"Encoding {len(text_list)} texts with SentenceTransformer, batch_size={batch_size}...")
         embeddings = model.encode(
             text_list,
