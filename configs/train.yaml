@@ -1,0 +1,60 @@
+# @package _global_
+
+# specify here default configuration
+# order of defaults determines the order in which configs override each other
+defaults:
+  - _self_
+  - train: base_experiment  # 选择实验模板（configs/train/base_experiment.yaml）
+  - dataset: mmlu
+  - task: mmlu  # 修正：应该是 mmlu 而不是 caption
+
+
+# data args
+data_files: ???
+# 可选：若 stage1 的 JSON 里 query 在序列中间，填原始 JSON 路径，会先跑 fix_icd_json_query_last 再加载
+# 不填则直接用 result_dir/generated_data/{data_files}
+fix_query_last_json: null
+# 预计算的 Qwen 向量（必须提供）。支持：(1) Dict[int, Tensor] 的 .pt/.pkl；(2) sampler 的 (N,D) tensor .pt，会按行转成 dict
+embedding_path: ???
+train_ratio: 0.9
+batch_size: 64
+num_workers: 16
+
+
+# Trainer
+trainer_args:
+  devices: 1
+  strategy: ddp
+  accelerator: gpu
+  precision: "16-mixed"
+  log_every_n_steps: 10
+  val_check_interval: 0.5
+  max_epochs: 20
+  fast_dev_run: false
+
+
+# train args:
+
+lr: 1e-4
+weight_decay: 1e-3
+warm_steps: 0.05
+
+# Others（与 generate_data 共用同一 result_dir 根目录）
+result_dir: "./generated_icd_data"
+ex_name: "debug"
+seed: 42
+dirpath: "${result_dir}/model_cpk/${task.task_name}/${ex_name}"
+
+# wandb_args
+wandb_args:
+  save_dir: "${result_dir}/wandb_logs"
+  name: "${ex_name}"
+  project: "LeverLM"
+  log_model: false
+
+hydra:
+  run:
+    dir: ${result_dir}/hydra_output/${hydra.job.name}/${ex_name}/${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: ${result_dir}/hydra_output/${hydra.job.name}/${ex_name}/${now:%Y-%m-%d_%H-%M-%S}
+    subdir: ${hydra.job.override_dirname}

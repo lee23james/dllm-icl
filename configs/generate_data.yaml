@@ -1,6 +1,8 @@
 #暂时先准备这些
 # 阶段1：数据生成配置
+# _self_ 表示本文件优先，避免 Hydra 1.1+ 的 Defaults list 警告
 defaults:
+  - _self_
   - task/mmlu
   - dataset/mmlu
   - sampler/random
@@ -20,14 +22,24 @@ candidate_num: 64  # 候选集大小（默认值，可通过命令行覆盖：sa
 anchor_sample_num: 100  # anchor数量（默认值，可通过命令行覆盖：sampler.anchor_sample_num=10）
 
 # 多卡配置（可选）
-use_multi_gpu: false  # 是否使用多GPU
-gpu_ids: [0]  # GPU ID列表，例如 [0, 1, 2, 3]
+use_multi_gpu: false   # 是否使用多GPU（默认 2 张卡）
+gpu_ids: 0      # GPU ID列表，例如 [0, 1, 2, 3]
 sleep_time: 10  # 多卡模式下，各进程启动间隔（秒）
 
-# 输出配置
-output_dir: "./generated_icd_data"
+# 统一根目录（硬编码，不再使用 oc.env:RESULT_DIR）
+# 其下结构：generated_data/ | model_cpk/ | wandb_logs/ | cache/ | hydra_output/
+result_dir: "./generated_icd_data"
+output_dir: ${result_dir}  # 与 result_dir 一致，generate_data_main 会在此下建 generated_data/
 merge_results: false  # 多卡模式下，是否合并所有rank的结果
 
 # 测试配置（用于test_candidate_scoring.py）
 mc_num: 1  # 测试时使用的Monte Carlo采样次数（可以减小以加快速度）
 cfg_scale: 0.0  # CFG scale
+
+# hydra 输出到 result_dir 下
+hydra:
+  run:
+    dir: ${result_dir}/hydra_output/${hydra.job.name}/${task.task_name}/${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: ${result_dir}/hydra_output/multirun/${hydra.job.name}/${now:%Y-%m-%d_%H-%M-%S}
+  verbose: "INFO"

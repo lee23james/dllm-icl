@@ -16,11 +16,13 @@ if os.path.exists(_utils_path):
         spec = importlib.util.spec_from_file_location("_root_utils_module", _utils_path)
         _root_utils = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(_root_utils)
-        # Re-export get_info_score and load_ds functions
+        # Re-export get_info_score, load_ds, fix_icd_json_query_last
         if hasattr(_root_utils, 'get_info_score'):
             get_info_score = _root_utils.get_info_score
         if hasattr(_root_utils, 'load_ds'):
             load_ds = _root_utils.load_ds
+        if hasattr(_root_utils, 'fix_icd_json_query_last'):
+            fix_icd_json_query_last = _root_utils.fix_icd_json_query_last
     except Exception as e:
         # If import fails, raise a more informative error
         raise ImportError(

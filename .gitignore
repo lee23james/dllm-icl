@@ -40,7 +40,7 @@ results/
 rollout_results/
 heatmap_results/
 
-# Generated data and cache
+# Generated data and cache（不上传，本地生成）
 generated_icd_data/
 cache/
 outputs/
@@ -65,4 +65,5 @@ __pycache__/
 
 # OS
 .DS_Store
-Thumbs.db
+Thumbs.db--input
+--output_dir

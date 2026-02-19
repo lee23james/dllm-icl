@@ -1,0 +1,6 @@
+# 基础实验模板：选择 Dataset 和 Model 配置
+# 这个文件决定用哪一套 lever_lm_ds 和 lever_lm 配置
+
+defaults:
+  - lever_lm_ds: base_lever_lm_ds
+  - lever_lm: base_lever_lm

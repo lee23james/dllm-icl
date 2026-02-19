@@ -1,3 +1,4 @@
+import json
 import os
 from typing import Dict, List, Optional, Union, Tuple
 
@@ -391,11 +392,114 @@ def get_info_score(
         # 4.4 计算 InfoScore = 插入后 - 插入前
         infoscore = score_after - score_before
         scores.append(infoscore)
-        
-        logger.debug(
-            f"Candidate at position {position} (insert_pos={insert_pos}): "
-            f"score_after={score_after:.4f}, infoscore={infoscore:.4f}"
-        )
+        # 打分详情已去掉默认 debug 输出，避免刷屏；需要时可把下方取消注释或设置 hydra.verbose=DEBUG
+        # logger.debug(
+        #     f"Candidate at position {position} (insert_pos={insert_pos}): "
+        #     f"score_after={score_after:.4f}, infoscore={infoscore:.4f}"
+        # )
     
     return torch.tensor(scores, dtype=torch.float32)
+
+#将原本放到中间的json放到后面
+def fix_icd_json_query_last(json_path: str, out_path: Optional[str] = None) -> str:
+    """
+    将「query 在中间」的 ICD 生成 JSON 转为「query 在最后」的版本，并保存为新文件（不覆盖原文件）。
     
+    原 JSON 格式：每个 key 为 anchor（query）的 id；value 含 id_list（每条为索引序列，其中一项为 query）
+    和 score_list。序列中 query 可能在中间，例如 [icd1, icd2, query, icd3, icd4]。
+    
+    本函数对每条 id_list 中的序列重排为：保持其他 id 相对顺序不变，把 query（即 key 对应的 id）
+    移到序列末尾，即 [icd1, icd2, icd3, icd4, query]。score_list 及其余字段不变。
+    
+    Args:
+        json_path: 原始 JSON 文件路径（如 generated_data/xxx-mc_num:1-coarse_k:200-lambda:0.1.json）
+        out_path: 输出路径；若为 None，则在原路径的 .json 前插入 "-fix"，得到 xxx-fix.json
+    
+    Returns:
+        实际写入的路径（out_path 或自动生成的 -fix 路径）
+    
+    Example:
+        fix_icd_json_query_last("generated_data/mmlu-...-lambda:0.1.json")
+        -> 生成 "generated_data/mmlu-...-lambda:0.1-fix.json"，原文件不改动
+    """
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    
+    if out_path is None:
+        if not json_path.endswith(".json"):
+            out_path = json_path.rstrip() + "-fix.json"
+        else:
+            out_path = json_path[:-5] + "-fix.json"
+    
+    fixed = {}
+    for anchor_key, record in data.items():
+        anchor_id = int(anchor_key)
+        id_list = record.get("id_list", [])
+        score_list = record.get("score_list", [])
+        new_id_list = []
+        for seq in id_list:
+            # 保持相对顺序：所有不等于 query 的 id 按原序，最后接 query
+            others = [x for x in seq if int(x) != anchor_id]
+            query_at_end = others + [anchor_id]
+            new_id_list.append(query_at_end)
+        fixed[anchor_key] = {
+            "id_list": new_id_list,
+            "score_list": score_list,
+        }
+    
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(fixed, f, ensure_ascii=False, indent=2)
+    
+    logger.info(f"fix_icd_json_query_last: 已写入 query 置尾的 JSON -> {out_path}（原文件未修改）")
+    return out_path
+
+
+def sampler_cache_to_embedding_dict(
+    cache_path: str,
+    out_path: Optional[str] = None,
+    map_location: str = "cpu",
+) -> str:
+    """
+    将 sampler 的 Qwen 特征缓存（(N, D) 的 tensor）转成 train.py 可用的 embedding_dict（{i: vector}）。
+
+    Sampler 的 cache 文件（如 generated_icd_data/cache/mmlu/mmlu-mmlu-Qwen3-Embedding-4B-TextFeatures.pt）
+    存的是 shape=(N, 2560) 的 tensor，第 i 行对应 train_ds[i] 的文本 embedding。
+    train.py 的 _load_embedding_dict 期望的是 dict[int, Tensor]，本函数完成转换并另存。
+
+    Args:
+        cache_path: sampler 特征缓存 .pt 路径（内容为 tensor (N, D)）
+        out_path: 输出 .pt 路径；若为 None，则在 cache_path 同目录下生成 xxx_embedding_dict.pt
+        map_location: torch.load 的 map_location（默认 "cpu"）
+
+    Returns:
+        实际写入的路径。
+
+    Example:
+        sampler_cache_to_embedding_dict(
+            "generated_icd_data/cache/mmlu/mmlu-mmlu-Qwen3-Embedding-4B-TextFeatures.pt",
+            "generated_icd_data/qwen3_embeddings_mmlu_from_cache.pt",
+        )
+        然后在 train 时设 embedding_path=generated_icd_data/qwen3_embeddings_mmlu_from_cache.pt
+    """
+    if not os.path.exists(cache_path):
+        raise FileNotFoundError(f"Sampler cache not found: {cache_path}")
+
+    cache = torch.load(cache_path, map_location=map_location)
+    if not isinstance(cache, torch.Tensor):
+        raise TypeError(f"Expected tensor in {cache_path}, got {type(cache)}")
+
+    embedding_dict = {i: cache[i] for i in range(cache.shape[0])}
+
+    if out_path is None:
+        base, ext = os.path.splitext(cache_path)
+        out_path = base + "_embedding_dict" + (ext or ".pt")
+
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    torch.save(embedding_dict, out_path)
+    logger.info(
+        f"sampler_cache_to_embedding_dict: 已转换 {cache.shape[0]} 条 -> {out_path}"
+    )
+    return out_path
