@@ -5,9 +5,9 @@ from typing import Dict, List, Optional, Union
 
 import hydra
 import pytorch_lightning as pl
-from omegaconf import DictConfig
-from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
-from pytorch_lightning.loggers.wandb import WandbLogger
+from omegaconf import DictConfig, OmegaConf
+from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.loggers import TensorBoardLogger
 from torch import optim
 from torch.utils.data import DataLoader
 from transformers import get_cosine_schedule_with_warmup
@@ -207,7 +207,13 @@ class ICDSeqDataModule(pl.LightningDataModule):
 def main(cfg: DictConfig):
     pl.seed_everything(cfg.seed)
 
-    logger = WandbLogger(**cfg.wandb_args)
+    try:
+        from pytorch_lightning.loggers.wandb import WandbLogger
+        logger = WandbLogger(**cfg.wandb_args)
+    except (ImportError, ModuleNotFoundError) as e:
+        save_dir = cfg.wandb_args.get("save_dir", cfg.result_dir + "/wandb_logs")
+        logger = TensorBoardLogger(save_dir=save_dir, name=cfg.wandb_args.get("name", "debug"))
+        print(f"[train] wandb 不可用 ({e})，使用 TensorBoard，日志保存在 {save_dir}")
     tl_model_cpk_callback = ModelCheckpoint(
         filename="min_tl-{epoch}-{train_loss:.5f}-{val_loss:.5f}",
         monitor="train_loss",
@@ -220,18 +226,23 @@ def main(cfg: DictConfig):
         filename="min_vl-{epoch}-{train_loss:.5f}-{val_loss:.5f}",
         monitor="val_loss",
         save_last=True,
-        save_top_k=1,
+        save_top_k=5,  # 保留 val_loss 最优的 5 个，便于使用 epoch 0/1 等早期权重
         mode="min",
         dirpath=cfg.dirpath,
     )
+    early_stop_cfg = cfg.get("early_stopping")
+    callbacks = [
+        LearningRateMonitor(),
+        tl_model_cpk_callback,
+        vl_model_cpk_callback,
+    ]
+    if early_stop_cfg:
+        early_stop = EarlyStopping(**OmegaConf.to_container(early_stop_cfg, resolve=True))
+        callbacks.append(early_stop)
 
     trainer = pl.Trainer(
         logger=logger,
-        callbacks=[
-            LearningRateMonitor(),
-            tl_model_cpk_callback,
-            vl_model_cpk_callback,
-        ],
+        callbacks=callbacks,
         **cfg.trainer_args,
     )
 
@@ -239,11 +250,24 @@ def main(cfg: DictConfig):
     # 构建 embedding_lookup [vocab_size, input_dim]，供 ICD 位置叠加 text embedding
     input_dim = cfg.train.lever_lm.get("input_dim", 2560)
     emb_lookup = torch.zeros(data_module.index_ds_size + 3, input_dim, dtype=torch.float32)
+    missing_count = 0
     for i in range(data_module.index_ds_size):
         if i in data_module.embedding_dict:
             v = data_module.embedding_dict[i]
             v = v if isinstance(v, torch.Tensor) else torch.tensor(v, dtype=torch.float32)
             emb_lookup[i] = v.squeeze().float()
+        else:
+            missing_count += 1
+    # 诊断：若候选 ICD 样本缺少 embedding，会导致 Zero-Embedding，模型无法学到语义，验证集崩溃
+    if missing_count > 0:
+        raise RuntimeError(
+            f"[致命] embedding_dict 缺少 {missing_count}/{data_module.index_ds_size} 个索引的向量！\n"
+            f"emb_lookup 中索引 0..{data_module.index_ds_size - 1} 必须全部有值（对应所有候选 ICD 样本的 Qwen 语义特征）。\n"
+            f"当前 embedding_path 可能只包含 query 向量。请确保使用 sampler 的完整 TextFeatures.pt：\n"
+            f"  例如 embedding_path=generated_icd_data/cache/mmlu/mmlu-mmlu-Qwen3-Embedding-4B-TextFeatures.pt\n"
+            f"  或先运行 utils.sampler_cache_to_embedding_dict 将 (N,D) tensor 转为 dict 后使用。"
+        )
+    print(f"[emb_lookup] 已加载 {data_module.index_ds_size} 条 Qwen embedding，覆盖所有候选 ICD 索引 0..{data_module.index_ds_size - 1}")
     # 实例化模型，传入 index_ds_size 和 embedding_lookup
     lever_lm = hydra.utils.instantiate(
         cfg.train.lever_lm,

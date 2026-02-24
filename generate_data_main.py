@@ -390,10 +390,44 @@ def _main_impl(cfg: DictConfig):
     logger.info(f"Anchor set size: {len(sampler_result['anchor_set'])}")
     logger.info(f"Candidate sets generated for {len(sampler_result['candidate_set'])} anchors")
     
-    # 3. 检查是否使用多卡模式
-    use_multi_gpu = cfg.get("use_multi_gpu", False)
-    gpu_ids = cfg.get("gpu_ids", [0])
+    # 3. 检查是否使用多卡模式（兼容 Hydra/OmegaConf 类型 + 环境变量兜底）
+    _use = cfg.get("use_multi_gpu", False)
+    logger.info(f"[GPU] cfg.use_multi_gpu 原始值: {_use!r}, 类型: {type(_use).__name__}")
+    # OmegaConf 可能返回非原生 bool，用 == True / bool() 保证识别
+    if isinstance(_use, str):
+        use_multi_gpu = _use.strip().lower() in ("true", "1", "yes")
+    else:
+        use_multi_gpu = bool(_use)
+    _env_multi = os.environ.get("USE_MULTI_GPU", "").strip().lower() in ("1", "true", "yes")
+    use_multi_gpu = use_multi_gpu or _env_multi
+    logger.info(f"[GPU] 解析后 use_multi_gpu={use_multi_gpu}, 环境变量 USE_MULTI_GPU={os.environ.get('USE_MULTI_GPU', '')!r}")
+    _gpu = cfg.get("gpu_ids", [0])
+    logger.info(f"[GPU] cfg.gpu_ids 原始值: {_gpu!r}, 类型: {type(_gpu).__name__}")
+    # OmegaConf 可能返回 ListConfig，先转成 list 再解析
+    try:
+        _gpu = list(_gpu) if _gpu is not None else []
+    except Exception as e:
+        logger.warning(f"[GPU] gpu_ids 转 list 失败: {e}, 使用 []")
+        _gpu = []
+    if isinstance(_gpu, (list, tuple)) and len(_gpu) > 0:
+        gpu_ids = [int(x) for x in _gpu]
+    elif isinstance(_gpu, str):
+        _gpu = _gpu.strip()
+        if _gpu.startswith("[") and _gpu.endswith("]"):
+            _gpu = _gpu[1:-1]
+        gpu_ids = [int(x.strip()) for x in _gpu.split(",") if x.strip()]
+    else:
+        gpu_ids = [0]
+    # 环境变量兜底：GPU_IDS=0,1 可覆盖
+    _env_gpu = os.environ.get("GPU_IDS", "").strip()
+    if _env_gpu:
+        gpu_ids = [int(x.strip()) for x in _env_gpu.split(",") if x.strip()]
+        logger.info(f"[GPU] 环境变量 GPU_IDS={_env_gpu!r} 覆盖 gpu_ids -> {gpu_ids}")
+    if not gpu_ids:
+        gpu_ids = [0]
     sleep_time = cfg.get("sleep_time", 10)
+    cfg.gpu_ids = gpu_ids
+    logger.info(f"[GPU] 最终: 卡数={len(gpu_ids)}, gpu_ids={gpu_ids}, 将使用 {'多卡' if (use_multi_gpu and len(gpu_ids) > 1) else '单卡'} 模式")
     
     if use_multi_gpu and len(gpu_ids) > 1:
         # 多卡模式：使用gen_data进行数据分片

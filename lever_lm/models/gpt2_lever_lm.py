@@ -26,6 +26,9 @@ class GPT2LeverLM(BaseLeverLM):
         input_dim: int = 2560,
         adapter: bool = True,
         norm: bool = False,
+        attn_pdrop: float = 0.1,
+        resid_pdrop: float = 0.1,
+        embd_pdrop: float = 0.1,
         freeze_prefix_list: Optional[List[str]] = None,
         query_encoding_flag: Optional[List[str]] = None,
         icd_encoding_flag: Optional[List[str]] = None,
@@ -49,6 +52,9 @@ class GPT2LeverLM(BaseLeverLM):
             n_layer=n_layer,
             eos_token_id=index_ds_size,
             bos_token_id=index_ds_size + 1,
+            attn_pdrop=attn_pdrop,
+            resid_pdrop=resid_pdrop,
+            embd_pdrop=embd_pdrop,
         )
         self.lm_model = GPT2LMHeadModel(config)
 
@@ -86,7 +92,8 @@ class GPT2LeverLM(BaseLeverLM):
             lm_output (e.g. loss, logits) from GPT2LMHeadModel.
         """
         # 1. Base embeddings from token ids
-        inputs_embeds = self.lm_model.transformer.wte(icd_seq_idx)
+        inputs_embeds = self.lm_model.transformer.wte(icd_seq_idx).clone()
+        # clone() 避免原地修改破坏计算图，防止 "modified by an inplace operation" 梯度错误
 
         # 2. Project query and add at position 1 (QUERY slot)：可学习向量 + query text emb
         if self._adapter and self.input_adapter is not None:

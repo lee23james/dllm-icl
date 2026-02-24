@@ -3,22 +3,28 @@ defaults:
   - task/mmlu
   - dataset/mmlu
   - infer_model/llada
+  - train: base_experiment  # 用于 LeverLM 模型结构（lever_lm, lever_lm_ds）
 
-# Retriever配置
+# Retriever 配置
 retriever:
-  nshot: 4  # few-shot示例数量
-  seed: 42  # 随机种子
+  type: lever_lm  # rand | lever_lm
+  nshot: 3
+  seed: 42
 
-# Query位置配置
-query_position: 0  # 0表示最后，nshot表示最前
+# Query 位置
+query_position: 0  # 0=最后，nshot=最前
 
-# 输出配置
-output_dir: "./icl_inference_results"
-max_samples: null  # 限制测试样本数量（null表示全部）
+# LeverLM 配置（当 retriever.type=lever_lm 时使用）
+lever_lm:
+  ckpt_dir: "generated_icd_data/model_cpk/mmlu/debug"
+  ckpt_path: "generated_icd_data/model_cpk/mmlu/debug/min_vl-epoch=0-train_loss=6.68746-val_loss=7.14538.ckpt"  # 若指定则优先使用；否则从 ckpt_dir 按 default_cpk_key 查找
+  default_cpk_key: "min_vl"  # min_vl | min_tl | last
+  embedding_path: "generated_icd_data/cache/mmlu/mmlu-mmlu-Qwen3-Embedding-4B-TextFeatures.pt"
+  qwen_model_path: "/home/lzh/.cache/modelscope/hub/models/Qwen/Qwen3-Embedding-4B"
+  device: "cuda:0"
+  batch_size: 32
+  reverse_seq: false  # 是否反转生成的 ICD 序列顺序
 
-
-
-
-
-
-
+# 输出
+output_dir: "./generated_icd_data/icl_inference_results"
+max_samples: null  # 限制测试样本数（null=全部）

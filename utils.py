@@ -454,7 +454,7 @@ def fix_icd_json_query_last(json_path: str, out_path: Optional[str] = None) -> s
     logger.info(f"fix_icd_json_query_last: 已写入 query 置尾的 JSON -> {out_path}（原文件未修改）")
     return out_path
 
-
+#之前已经生成的pt文件可以用到第一个分类器中,这里就可以直接把之前的pt文件转化成一个字典,方便第二阶段进行相关训练
 def sampler_cache_to_embedding_dict(
     cache_path: str,
     out_path: Optional[str] = None,
@@ -503,3 +503,84 @@ def sampler_cache_to_embedding_dict(
         f"sampler_cache_to_embedding_dict: 已转换 {cache.shape[0]} 条 -> {out_path}"
     )
     return out_path
+
+
+def get_lever_lm_path(ckpt_dir: str, default_cpk_key: str = "min_vl") -> str:
+    """
+    从 checkpoint 目录获取 LeverLM 权重路径。
+
+    Args:
+        ckpt_dir: checkpoint 目录，如 generated_icd_data/model_cpk/mmlu/debug
+        default_cpk_key: "min_vl" | "min_tl" | "last"，优先使用 min_vl（val_loss 最优）
+
+    Returns:
+        checkpoint 文件路径
+    """
+    import glob
+    if default_cpk_key == "min_vl":
+        pattern = os.path.join(ckpt_dir, "min_vl-*.ckpt")
+    elif default_cpk_key == "min_tl":
+        pattern = os.path.join(ckpt_dir, "min_tl-*.ckpt")
+    elif default_cpk_key == "last":
+        path = os.path.join(ckpt_dir, "last.ckpt")
+        if os.path.exists(path):
+            return path
+        pattern = os.path.join(ckpt_dir, "last*.ckpt")
+    else:
+        raise ValueError(f"default_cpk_key must be min_vl|min_tl|last, got {default_cpk_key}")
+    candidates = glob.glob(pattern)
+    if not candidates:
+        raise FileNotFoundError(f"No checkpoint found: {pattern}")
+    return max(candidates, key=os.path.getmtime)
+
+
+def init_lever_lm(
+    cfg,
+    ckpt_path: str,
+    train_ds,
+    embedding_path: str,
+    device: str = "cuda:0",
+):
+    """
+    初始化训练好的 LeverLM 模型，用于 ICD 生成。
+
+    Args:
+        cfg: 配置（需含 train.lever_lm, train.lever_lm.input_dim 等）
+        ckpt_path: checkpoint 路径
+        train_ds: 训练集（用于 index_ds_size）
+        embedding_path: Qwen embedding 缓存路径（与训练时一致）
+        device: 设备
+
+    Returns:
+        lever_lm: GPT2LeverLM 实例，已加载权重
+        embedding_dict: {idx: tensor} 供 LeverLMRetriever 使用（可选）
+    """
+    from train import _load_embedding_dict, LeverLM
+    import hydra
+
+    index_ds_size = len(train_ds)
+    embedding_dict = _load_embedding_dict(embedding_path)
+    input_dim = cfg.train.lever_lm.get("input_dim", 2560)
+    emb_lookup = torch.zeros(index_ds_size + 3, input_dim, dtype=torch.float32)
+    for i in range(index_ds_size):
+        if i in embedding_dict:
+            v = embedding_dict[i]
+            v = v if isinstance(v, torch.Tensor) else torch.tensor(v, dtype=torch.float32)
+            emb_lookup[i] = v.squeeze().float()
+
+    lever_lm = hydra.utils.instantiate(
+        cfg.train.lever_lm,
+        index_ds_size=index_ds_size,
+        embedding_lookup=emb_lookup,
+    )
+    model = LeverLM(
+        lever_lm,
+        lr=cfg.get("lr", 1e-4),
+        weight_decay=cfg.get("weight_decay", 1e-3),
+        warm_steps=cfg.get("warm_steps", 0.05),
+    )
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    model.load_state_dict(ckpt.get("state_dict", ckpt), strict=False)
+    model.eval()
+    lever_lm = model.lever_lm.to(device)
+    return lever_lm, embedding_dict

@@ -5,7 +5,8 @@ python /home/lzh/llada-icl/generate_data_main.py \
   beam_size=5 \
   mc_num=1 \
   batch_size=1 \
-  use_multi_gpu=false \
+  use_multi_gpu=true \
+  gpu_ids=[0,1] \
 #   sampler.coarse_k=200 \
 #   sampler.mmr_lambda=0.1 \
 

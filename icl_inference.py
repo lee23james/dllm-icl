@@ -21,13 +21,14 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from open_mmicl.retriever import RandRetriever
+from open_mmicl.retriever.lever_lm_retriever import LeverLMRetriever
+from lever_lm.utils import format_text_for_embedding
 from open_mmicl.interface import LLaDAInterface
 from open_mmicl.metrics import GSM8KMetrics, MMLUMetrics
 from open_mmicl.icl_interface import DLLMICLInferencer
 from lever_lm.load_ds_utils import load_gsm8k_ds, load_mmlu_ds
 from utils import load_ds
-#这里是第二阶段,需要进行推理(其实也需要batch和分类)
-#这里我并没有进行详细的检查
+
 
 @hydra.main(version_base=None, config_path="configs", config_name="icl_inference")
 def main(cfg: DictConfig):
@@ -111,13 +112,51 @@ def main(cfg: DictConfig):
         logger.error("Please check your model_path configuration in configs/infer_model/llada.yaml")
         return
     
-    # 3. 初始化retriever
+    # 3. 初始化 retriever
     logger.info("Initializing retriever...")
-    retriever = RandRetriever(
-        train_ds=train_ds,
-        nshot=cfg.retriever.nshot,
-        seed=cfg.retriever.get("seed", 42),
-    )
+    retriever_type = cfg.retriever.get("type", "rand")
+    if retriever_type == "lever_lm":
+        from utils import get_lever_lm_path, init_lever_lm
+        lm_cfg = cfg.get("lever_lm", {})
+        ckpt_path = lm_cfg.get("ckpt_path")
+        if not ckpt_path or not os.path.exists(ckpt_path):
+            ckpt_dir = lm_cfg.get("ckpt_dir", "generated_icd_data/model_cpk/mmlu/debug")
+            default_key = lm_cfg.get("default_cpk_key", "min_vl")
+            ckpt_path = get_lever_lm_path(ckpt_dir, default_key)
+            logger.info(f"LeverLM checkpoint: {ckpt_path}")
+        emb_path = lm_cfg.get("embedding_path")
+        if not emb_path or not os.path.exists(emb_path):
+            raise ValueError(
+                f"lever_lm.embedding_path 必须存在: {emb_path}\n"
+                "请设置 lever_lm.embedding_path=generated_icd_data/cache/mmlu/xxx-TextFeatures.pt"
+            )
+        lever_lm, _ = init_lever_lm(
+            cfg=cfg,
+            ckpt_path=ckpt_path,
+            train_ds=train_ds,
+            embedding_path=emb_path,
+            device=lm_cfg.get("device", "cuda:0"),
+        )
+        # 与训练时 TextSimQwenMMRSampler._format_text 完全一致，确保 query embedding 与 TextFeatures.pt 格式匹配
+        dataset_type = cfg.dataset.get("name", cfg.task.task_name)
+        text_field_name = "question"  # 与 configs/sampler/text_sim_qwen_mmr.yaml 一致
+        query_text_extractor = lambda s: format_text_for_embedding(s, dataset_type, text_field_name)
+        retriever = LeverLMRetriever(
+            index_ds=train_ds,
+            lever_lm=lever_lm,
+            qwen_model_path=lm_cfg.get("qwen_model_path", "Qwen/Qwen3-Embedding-4B"),
+            query_text_extractor=query_text_extractor,
+            nshot=cfg.retriever.nshot,
+            device=lm_cfg.get("device", "cuda:0"),
+            batch_size=lm_cfg.get("batch_size", 32),
+            reverse_seq=lm_cfg.get("reverse_seq", False),
+        )
+    else:
+        retriever = RandRetriever(
+            train_ds=train_ds,
+            nshot=cfg.retriever.nshot,
+            seed=cfg.retriever.get("seed", 42),
+        )
     
     # 4. 初始化interface
     logger.info("Initializing interface...")
@@ -200,10 +239,10 @@ def main(cfg: DictConfig):
             prompt_tensor = interface.tokenize_prompt(prompt)
             
             # 生成（传入生成参数）
-            output_tensor = interface.generate(
-                prompt_tensor,
-                **cfg.infer_model.generation_kwargs
-            )
+            gen_kwargs = cfg.infer_model.get("generation_kwargs", {})
+            if not gen_kwargs and cfg.task.get("gen_args"):
+                gen_kwargs = dict(cfg.task.gen_args)
+            output_tensor = interface.generate(prompt_tensor, **gen_kwargs)
             
             # 解码
             generated_text = interface.decode_output(output_tensor)

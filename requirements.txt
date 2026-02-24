@@ -31,6 +31,10 @@ datasets>=2.0.0
 # Logging
 loguru>=0.7.0
 
+# Training (stage2)
+pytorch-lightning>=2.0.0
+wandb>=0.16.0
+
 # Qwen3-Embedding 使用 modelscope 本地路径时（如 .cache/modelscope/...）需安装：
 # pip install modelscope
 # 否则需 transformers>=4.51.0 从 Hugging Face 加载
