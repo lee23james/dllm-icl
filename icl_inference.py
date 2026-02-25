@@ -22,13 +22,14 @@ if project_root not in sys.path:
 
 from open_mmicl.retriever import RandRetriever
 from open_mmicl.retriever.lever_lm_retriever import LeverLMRetriever
-from lever_lm.utils import format_text_for_embedding
 from open_mmicl.interface import LLaDAInterface
 from open_mmicl.metrics import GSM8KMetrics, MMLUMetrics
 from open_mmicl.icl_interface import DLLMICLInferencer
+from open_mmicl.prompt_template import PromptTemplate
 from lever_lm.load_ds_utils import load_gsm8k_ds, load_mmlu_ds
 from utils import load_ds
-
+#这里是第二阶段,需要进行推理(其实也需要batch和分类)
+#这里我并没有进行详细的检查
 
 @hydra.main(version_base=None, config_path="configs", config_name="icl_inference")
 def main(cfg: DictConfig):
@@ -62,12 +63,43 @@ def main(cfg: DictConfig):
     
     logger.info(f"Train dataset size: {len(train_ds)}")
     logger.info(f"Test dataset size: {len(test_ds)}")
+
+    # 2. 读取 prompt 配置（供 retriever 和 interface 复用）
+    prompt_template = cfg.task.get("template", None)
+    column_token_map = cfg.task.get("column_token_map", None)
+    if column_token_map is not None:
+        column_token_map = dict(column_token_map)
+
+    mask_column_token_map = cfg.task.get("mask_column_token_map", None)
+    if mask_column_token_map is not None and isinstance(mask_column_token_map, dict):
+        mask_column_token_map = dict(mask_column_token_map)
+
+    mask_length = cfg.infer_model.get("mask_length", 256)
+    task_gen_args = cfg.task.get("gen_args", None)
+    if task_gen_args is not None and "mask_length" in task_gen_args:
+        try:
+            mask_length = int(task_gen_args.mask_length)
+            logger.info(f"Using mask_length from task.gen_args: {mask_length}")
+        except Exception as e:
+            logger.warning(
+                f"Failed to read mask_length from task.gen_args, fallback to infer_model.mask_length. Error: {e}"
+            )
+
+    prompt_template_obj = None
+    if prompt_template is not None:
+        prompt_template_obj = PromptTemplate(
+            prompt_template=prompt_template,
+            mask_length=mask_length,
+            column_token_map=column_token_map,
+            mask_column_token_map=mask_column_token_map,
+        )
     
-    # 2. 初始化模型和tokenizer
+    # 3. 初始化模型和tokenizer
     logger.info("Initializing model and tokenizer...")
     try:
         import torch
-        from transformers import AutoTokenizer, AutoModel
+        from transformers import AutoTokenizer
+        from model.model_llada import LLaDAModelLM
         
         # 获取模型路径
         model_path = cfg.infer_model.get("model_path", None)
@@ -80,7 +112,7 @@ def main(cfg: DictConfig):
             )
         
         logger.info(f"Loading model from {model_path}...")
-        logger.info("Using AutoModel to load from model directory (will use modeling_llada.py from model directory)")
+        logger.info("Using local LLaDAModelLM (model/model_llada.py) with weights from model_path")
         
         # 准备模型参数
         model_kwargs = {
@@ -89,9 +121,8 @@ def main(cfg: DictConfig):
             "local_files_only": cfg.infer_model.get("local_files_only", True),
         }
         
-        # 使用 AutoModel 从模型目录加载，这样会使用模型目录中的 modeling_llada.py
-        # 而不是项目中的 model/modeling_llada.py
-        model = AutoModel.from_pretrained(
+        # 使用本地 LLaDAModelLM 架构加载权重，避免走模型目录中的 remote modeling_llada.py
+        model = LLaDAModelLM.from_pretrained(
             model_path,
             **model_kwargs,
         )
@@ -106,17 +137,29 @@ def main(cfg: DictConfig):
             local_files_only=model_kwargs["local_files_only"],
         )
         
+        logger.info(f"Model class: {model.__class__.__module__}.{model.__class__.__name__}")
         logger.info("Model and tokenizer loaded successfully")
     except Exception as e:
         logger.error(f"Failed to load model: {e}")
         logger.error("Please check your model_path configuration in configs/infer_model/llada.yaml")
         return
     
-    # 3. 初始化 retriever
+    # 4. 初始化 retriever
     logger.info("Initializing retriever...")
     retriever_type = cfg.retriever.get("type", "rand")
     if retriever_type == "lever_lm":
-        from utils import get_lever_lm_path, init_lever_lm
+        # utils.py 与 utils/ 包同名，显式从 utils.py 加载函数避免导入冲突
+        from importlib.machinery import SourceFileLoader
+        from importlib.util import module_from_spec, spec_from_loader
+
+        utils_py_path = os.path.join(project_root, "utils.py")
+        utils_spec = spec_from_loader("utils_file", SourceFileLoader("utils_file", utils_py_path))
+        if utils_spec is None or utils_spec.loader is None:
+            raise ImportError(f"Failed to load utils.py from {utils_py_path}")
+        utils_module = module_from_spec(utils_spec)
+        utils_spec.loader.exec_module(utils_module)
+        get_lever_lm_path = utils_module.get_lever_lm_path
+        init_lever_lm = utils_module.init_lever_lm
         lm_cfg = cfg.get("lever_lm", {})
         ckpt_path = lm_cfg.get("ckpt_path")
         if not ckpt_path or not os.path.exists(ckpt_path):
@@ -137,10 +180,13 @@ def main(cfg: DictConfig):
             embedding_path=emb_path,
             device=lm_cfg.get("device", "cuda:0"),
         )
-        # 与训练时 TextSimQwenMMRSampler._format_text 完全一致，确保 query embedding 与 TextFeatures.pt 格式匹配
-        dataset_type = cfg.dataset.get("name", cfg.task.task_name)
-        text_field_name = "question"  # 与 configs/sampler/text_sim_qwen_mmr.yaml 一致
-        query_text_extractor = lambda s: format_text_for_embedding(s, dataset_type, text_field_name)
+        # 与训练时 PromptTemplate.generate_text_for_embedding 对齐，确保 query embedding 格式匹配
+        if prompt_template_obj is None:
+            raise ValueError("lever_lm retriever requires task.template to build embedding text.")
+        output_column = cfg.task.get("output_column", None)
+        query_text_extractor = lambda s: prompt_template_obj.generate_text_for_embedding(
+            s, output_column=output_column
+        )
         retriever = LeverLMRetriever(
             index_ds=train_ds,
             lever_lm=lever_lm,
@@ -150,6 +196,8 @@ def main(cfg: DictConfig):
             device=lm_cfg.get("device", "cuda:0"),
             batch_size=lm_cfg.get("batch_size", 32),
             reverse_seq=lm_cfg.get("reverse_seq", False),
+            debug=bool(lm_cfg.get("debug", False)),
+            debug_prefix_chars=int(lm_cfg.get("debug_prefix_chars", 160)),
         )
     else:
         retriever = RandRetriever(
@@ -158,32 +206,9 @@ def main(cfg: DictConfig):
             seed=cfg.retriever.get("seed", 42),
         )
     
-    # 4. 初始化interface
+    # 5. 初始化interface
     logger.info("Initializing interface...")
-    # 获取prompt模板和column_token_map（从task配置中读取）
-    prompt_template = cfg.task.get("template", None)
-    column_token_map = cfg.task.get("column_token_map", None)
-    if column_token_map is not None:
-        # 将DictConfig转换为普通字典
-        column_token_map = dict(column_token_map)
-    
-    # 获取mask_column_token_map（从task配置中读取）
-    mask_column_token_map = cfg.task.get("mask_column_token_map", None)
-    if mask_column_token_map is not None:
-        # 将DictConfig转换为普通字典（如果是字典）或保持字符串格式
-        if isinstance(mask_column_token_map, dict):
-            mask_column_token_map = dict(mask_column_token_map)
-        # 如果是字符串，保持原样（PromptTemplate会处理）
 
-    # 优先使用 task.gen_args 中的 mask_length，其次回退到 infer_model.mask_length
-    mask_length = cfg.infer_model.get("mask_length", 256)
-    task_gen_args = cfg.task.get("gen_args", None)
-    if task_gen_args is not None and "mask_length" in task_gen_args:
-        try:
-            mask_length = int(task_gen_args.mask_length)
-            logger.info(f"Using mask_length from task.gen_args: {mask_length}")
-        except Exception as e:
-            logger.warning(f"Failed to read mask_length from task.gen_args, fallback to infer_model.mask_length. Error: {e}")
     
     interface = LLaDAInterface(
         model=model,
@@ -234,9 +259,35 @@ def main(cfg: DictConfig):
                 test_sample=test_sample,
                 query_position=query_position,
             )
+
+            # Debug: print the exact prompt fed into the model (first sample only)
+            debug_cfg = cfg.get("debug", {})
+            if debug_cfg and debug_cfg.get("print_prompt", False) and idx == 0:
+                max_chars = int(debug_cfg.get("prompt_max_chars", 4000))
+                logger.info("=" * 80)
+                logger.info("[DEBUG] Final prompt fed to LLaDA (idx=0)")
+                logger.info(f"[DEBUG] query_position={query_position}, n_shots={len(icd_samples)}")
+                logger.info(f"[DEBUG] ground_truth(answer)={test_sample.get('answer', '')}")
+                if len(prompt) > max_chars:
+                    logger.info(prompt[:max_chars] + "\n...[TRUNCATED]...")
+                else:
+                    logger.info(prompt)
+                logger.info("=" * 80)
             
             # Tokenize
             prompt_tensor = interface.tokenize_prompt(prompt)
+
+            # Debug: show mask token positions in tokenized prompt (first sample only)
+            if debug_cfg and debug_cfg.get("print_prompt", False) and idx == 0:
+                try:
+                    mask_id = getattr(interface, "mask_id", None)
+                    if mask_id is not None:
+                        mask_pos = (prompt_tensor == mask_id).nonzero(as_tuple=False)
+                        # mask_pos: shape (num_masks, 2) where [:, 1] are token indices
+                        pos_list = mask_pos[:, 1].tolist() if mask_pos.numel() else []
+                        logger.info(f"[DEBUG] mask_id={mask_id}, mask_positions={pos_list}")
+                except Exception as _e:
+                    logger.warning(f"[DEBUG] failed to compute mask positions: {_e}")
             
             # 生成（传入生成参数）
             gen_kwargs = cfg.infer_model.get("generation_kwargs", {})
@@ -252,6 +303,18 @@ def main(cfg: DictConfig):
             
             # 获取真实答案
             ground_truth = test_sample.get("answer", "")
+
+            # Safety-net: ensure MMLU ground_truth is mapped to A/B/C/D
+            if cfg.task.task_name == "mmlu":
+                gt = str(ground_truth).strip()
+                idx2label = {"0": "A", "1": "B", "2": "C", "3": "D"}
+                if gt.upper() in {"A", "B", "C", "D"}:
+                    ground_truth = gt.upper()
+                elif gt in idx2label:
+                    ground_truth = idx2label[gt]
+                else:
+                    # keep as string, metrics will mark it incorrect if invalid
+                    ground_truth = gt
             
             # 评估
             eval_result = metrics.evaluate_single(generated_text, ground_truth)

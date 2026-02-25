@@ -184,6 +184,42 @@ def load_mmlu_ds(
     if version != "local":
         raise ValueError(f"Invalid version for MMLU: {version}")
 
+    def _cast_answer_to_string(ds_split: datasets.Dataset) -> datasets.Dataset:
+        """Force `answer` column to `string`.
+
+        Some parquet/arrow schemas keep `answer` typed as int in validation/test.
+        Even if we map values to "A"-"D", Datasets may coerce them back to int.
+        This helper makes the conversion stick by explicitly casting features.
+        """
+        if "answer" not in ds_split.column_names:
+            return ds_split
+
+        # Re-apply 0-3 -> A-D mapping defensively (some splits keep `answer` as int
+        # despite the earlier map due to Arrow schema coercion).
+        idx2label = {0: "A", 1: "B", 2: "C", 3: "D"}
+
+        def _ensure_label(ex):
+            a = ex.get("answer")
+            if a is None:
+                return {"answer": ""}
+            if isinstance(a, str) and a in {"A", "B", "C", "D"}:
+                return {"answer": a}
+            try:
+                ai = int(a)
+                return {"answer": idx2label.get(ai, str(a))}
+            except Exception:
+                return {"answer": str(a)}
+
+        ds_split = ds_split.map(_ensure_label)
+
+        # Make sure all values are representable as strings before casting.
+        # Preserve already-mapped labels ("A"-"D") if present.
+        # (after _ensure_label, everything should already be a string label)
+
+        features = ds_split.features.copy()
+        features["answer"] = datasets.Value("string")
+        return ds_split.cast(features)
+
     def _process_mmlu_example(example):
         """
         将 MMLU 样本中的嵌套字段展开，并进行标准化：
@@ -191,42 +227,40 @@ def load_mmlu_ds(
         2. 将 choices 数组展开为 choice_a~choice_d
         3. 将 answer 从数字索引(0~3)映射为选项字母(A~D)
         """
+        # avoid in-place mutation issues with Arrow/datasets typing by building a new dict
+        out = dict(example)
+
         # 1) 展开嵌套的 'train' 字段（HF 读取 parquet 时常见结构）
-        if "train" in example and isinstance(example["train"], dict):
-            inner = example["train"]
+        if "train" in out and isinstance(out["train"], dict):
+            inner = out["train"]
             for k, v in inner.items():
-                # 不覆盖已有的顶层键
-                if k not in example:
-                    example[k] = v
-            del example["train"]
+                out.setdefault(k, v)
+            out.pop("train", None)
 
         # 2) 处理 choices -> choice_a~d
-        if "choices" in example and isinstance(example["choices"], list):
-            choices = example["choices"]
+        if "choices" in out and isinstance(out["choices"], list):
+            choices = out["choices"]
             if len(choices) >= 1:
-                example["choice_a"] = choices[0]
+                out["choice_a"] = choices[0]
             if len(choices) >= 2:
-                example["choice_b"] = choices[1]
+                out["choice_b"] = choices[1]
             if len(choices) >= 3:
-                example["choice_c"] = choices[2]
+                out["choice_c"] = choices[2]
             if len(choices) >= 4:
-                example["choice_d"] = choices[3]
-            # 删除原始 choices 字段
-            del example["choices"]
+                out["choice_d"] = choices[3]
+            out.pop("choices", None)
 
         # 3) 处理 answer: 0/1/2/3 -> A/B/C/D
-        if "answer" in example:
+        if "answer" in out:
             idx2label = {0: "A", 1: "B", 2: "C", 3: "D"}
-            ans = example["answer"]
-            # 支持数字或可转为 int 的字符串
+            ans = out["answer"]
             try:
                 ans_idx = int(ans)
-                example["answer"] = idx2label.get(ans_idx, str(ans))
+                out["answer"] = idx2label.get(ans_idx, str(ans))
             except Exception:
-                # 如果无法转换为 int，保持原值
-                example["answer"] = str(ans)
+                out["answer"] = str(ans)
 
-        return example
+        return out
 
     # 方式2：只加载单个 split
     if data_path is not None and split is not None:
@@ -240,6 +274,7 @@ def load_mmlu_ds(
 
         # 展开 choices 并映射 answer
         ds_split = ds_split.map(_process_mmlu_example)
+        ds_split = _cast_answer_to_string(ds_split)
         return ds_split  # 返回单个 Dataset
 
     # 方式1：同时加载 train 和 validation
@@ -256,6 +291,7 @@ def load_mmlu_ds(
             ds_split = ds_split.add_column("idx", list(range(len(ds_split))))
             ds_split = ds_split.add_column("isquery", [0] * len(ds_split))
             ds_split = ds_split.map(_process_mmlu_example)
+            ds_split = _cast_answer_to_string(ds_split)
             ds[split_name] = ds_split
 
         return ds  # 返回 DatasetDict

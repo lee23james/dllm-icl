@@ -65,5 +65,8 @@ __pycache__/
 
 # OS
 .DS_Store
-Thumbs.db--input
+Thumbs.db
+
+# Workspace I/O placeholders
+--input
 --output_dir

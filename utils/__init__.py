@@ -27,7 +27,7 @@ if os.path.exists(_utils_path):
         # If import fails, raise a more informative error
         raise ImportError(
             f"Failed to import functions from utils.py at {_utils_path}: {e}. "
-            f"Please ensure all dependencies (hydra, torch, etc.) are installed."
+            "Please ensure all dependencies (hydra, torch, etc.) are installed."
         ) from e
 else:
     raise ImportError("Cannot find utils.py at {}".format(_utils_path))

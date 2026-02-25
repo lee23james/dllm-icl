@@ -4,6 +4,7 @@ LeverLM 检索器：使用训练好的 LeverLM 模型为每个 query 生成 ICD 
 与数据集解耦：通过 query_text_extractor 可调用对象提取 query 文本，不绑定具体数据集。
 """
 from typing import List, Dict, Any, Optional, Callable
+import hashlib
 
 import torch
 from datasets import Dataset
@@ -30,6 +31,8 @@ class LeverLMRetriever:
         device: str = "cuda:0",
         batch_size: int = 32,
         reverse_seq: bool = False,
+        debug: bool = False,
+        debug_prefix_chars: int = 160,
     ):
         """
         Args:
@@ -52,9 +55,18 @@ class LeverLMRetriever:
         self.reverse_seq = reverse_seq
         self.index_ds_size = len(index_ds)
         self._qwen_device = device
+        self.debug = debug
+        self.debug_prefix_chars = int(debug_prefix_chars)
         logger.info(
             f"LeverLMRetriever: nshot={nshot}, index_ds_size={self.index_ds_size}, reverse_seq={reverse_seq}"
         )
+
+    def _debug_text_fingerprint(self, text: str) -> str:
+        """Stable fingerprint for debugging whether per-sample query text really changes."""
+        t = text or ""
+        h = hashlib.sha1(t.encode("utf-8", errors="ignore")).hexdigest()[:10]
+        prefix = t[: self.debug_prefix_chars].replace("\n", "\\n")
+        return f"sha1={h} prefix='{prefix}'"
 
     def _extract_text(self, sample: Dict[str, Any]) -> str:
         """使用配置的 extractor 提取 query 文本"""
@@ -97,7 +109,24 @@ class LeverLMRetriever:
         """
         exclude_indices = exclude_indices or []
         text = self._extract_text(test_sample)
+        if self.debug:
+            logger.info(f"[LeverLMRetriever][DEBUG] query_text: {self._debug_text_fingerprint(text)}")
+
         query_emb = self._encode_query(text).to(self.device)
+
+        if self.debug:
+            # basic embedding stats to ensure it is not all-zeros / constant
+            try:
+                emb_cpu = query_emb.detach().float().cpu()
+                logger.info(
+                    "[LeverLMRetriever][DEBUG] emb stats: "
+                    f"shape={tuple(emb_cpu.shape)} "
+                    f"mean={emb_cpu.mean().item():.6f} std={emb_cpu.std().item():.6f} "
+                    f"min={emb_cpu.min().item():.6f} max={emb_cpu.max().item():.6f}"
+                )
+            except Exception as e:
+                logger.warning(f"[LeverLMRetriever][DEBUG] failed to log emb stats: {e}")
+
         pred_seqs = self.lever_lm.generation(
             query_embedding=query_emb,
             shot_num=self.nshot,
