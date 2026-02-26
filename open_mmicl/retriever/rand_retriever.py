@@ -2,7 +2,7 @@
 随机检索器：从训练集中随机选择ICD
 """
 import random
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Set
 from datasets import Dataset
 from loguru import logger
 
@@ -17,6 +17,7 @@ class RandRetriever:
         train_ds: Dataset,
         nshot: int = 4,
         seed: int = 42,
+        forbidden_indices: Optional[Set[int]] = None,
     ):
         """
         初始化随机检索器
@@ -29,8 +30,13 @@ class RandRetriever:
         self.train_ds = train_ds
         self.nshot = nshot
         self.seed = seed
+        # 全局禁止作为 ICD 候选的索引集合（例如 Stage1 JSON 中所有出现过的 id）
+        self.forbidden_indices: Set[int] = set(forbidden_indices or set())
         random.seed(seed)
-        logger.info(f"RandRetriever initialized with nshot={nshot}, seed={seed}")
+        logger.info(
+            f"RandRetriever initialized with nshot={nshot}, seed={seed}, "
+            f"forbidden_indices_size={len(self.forbidden_indices)}"
+        )
     
     def retrieve(
         self,
@@ -49,10 +55,12 @@ class RandRetriever:
         """
         exclude_indices = exclude_indices or []
         
-        # 获取所有可用索引
-        available_indices = list(range(len(self.train_ds)))
+        # 获取所有可用索引，并排除全局禁止集合
+        available_indices = [
+            idx for idx in range(len(self.train_ds)) if idx not in self.forbidden_indices
+        ]
         
-        # 排除指定的索引
+        # 排除当前 query 相关的索引（例如自身 idx）
         for idx in exclude_indices:
             if idx in available_indices:
                 available_indices.remove(idx)

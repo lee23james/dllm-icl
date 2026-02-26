@@ -7,7 +7,7 @@ defaults:
 
 # Retriever 配置
 retriever:
-  type: lever_lm  # rand | lever_lm
+  type: rand  # rand | lever_lm
   nshot: 3
   seed: 42
 
@@ -26,10 +26,15 @@ lever_lm:
   device: "cuda:1"
   batch_size: 32
   reverse_seq: false  # 是否反转生成的 ICD 序列顺序
+  debug: true
+  debug_prefix_chars: 200
 
 # 这里暂定200
 output_dir: "./generated_icd_data/icl_inference_results"
 max_samples: 3  # 限制测试样本数（null=全部）
+
+# 可选：自定义测试子集（例如 generated_icd_data/cache/test_200.json）
+test_subset_ids_path: null
 
 # Debug helpers (disabled by default)
 debug:

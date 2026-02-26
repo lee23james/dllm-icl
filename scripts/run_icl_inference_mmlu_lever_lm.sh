@@ -14,13 +14,14 @@ export CUDA_VISIBLE_DEVICES=${GPU_ID}
 # After setting CUDA_VISIBLE_DEVICES, the selected physical GPU becomes "cuda:0" inside this process.
 LEVER_DEVICE="cuda:0"
 
-# Optional: limit samples for quick smoke test
-MAX_SAMPLES=${MAX_SAMPLES:-20}
+# Optional: limit samples (default: 200)
+MAX_SAMPLES=${MAX_SAMPLES:-200}
 
 
 
 python icl_inference.py \
   retriever.type=lever_lm \
   retriever.nshot=3 \
+  test_subset_ids_path=generated_icd_data/cache/test_500.json \
   lever_lm.device=${LEVER_DEVICE} \
   max_samples=${MAX_SAMPLES}

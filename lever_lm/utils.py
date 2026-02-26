@@ -183,20 +183,37 @@ def encode_text_qwen(
         )
 
     try:
+        import os
+
         logger.info(f"Loading SentenceTransformer model: {model_name} on {device}")
-        # 只设置 padding_side，不传 attn_implementation 等，使用库默认行为
-        model = SentenceTransformer(
-            model_name,
-            device=device,
-            tokenizer_kwargs={"padding_side": "left"},
+
+        # 临时关闭 tqdm 进度条，避免在加载权重时打印 "Loading weights: 100% ..."。
+        prev_tqdm_disable = os.environ.get("TQDM_DISABLE", None)
+        os.environ["TQDM_DISABLE"] = "1"
+        try:
+            # 只设置 padding_side，不传 attn_implementation 等，使用库默认行为
+            model = SentenceTransformer(
+                model_name,
+                device=device,
+                tokenizer_kwargs={"padding_side": "left"},
+            )
+        finally:
+            # 恢复环境变量
+            if prev_tqdm_disable is None:
+                os.environ.pop("TQDM_DISABLE", None)
+            else:
+                os.environ["TQDM_DISABLE"] = prev_tqdm_disable
+
+        logger.info(
+            f"Encoding {len(text_list)} texts with SentenceTransformer, "
+            f"batch_size={batch_size}..."
         )
-        logger.info(f"Encoding {len(text_list)} texts with SentenceTransformer, batch_size={batch_size}...")
         embeddings = model.encode(
             text_list,
             batch_size=batch_size,
             convert_to_tensor=True,
             normalize_embeddings=normalize,
-            show_progress_bar=True,
+            show_progress_bar=False,  # 关闭编码时的进度条输出
         )
     except Exception as e:
         msg = str(e)

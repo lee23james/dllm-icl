@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
 阶段2：ICL推理主脚本
 使用 retriever 选择 ICD，然后进行推理和评估
@@ -63,6 +65,34 @@ def main(cfg: DictConfig):
     
     logger.info(f"Train dataset size: {len(train_ds)}")
     logger.info(f"Test dataset size: {len(test_ds)}")
+
+    # 可选：根据自定义的 idx 子集，重写测试集（常用于从 train 中抽取未见过的 200 条进行评估）
+    test_subset_ids_path = cfg.get("test_subset_ids_path", None)
+    if test_subset_ids_path:
+        try:
+            with open(test_subset_ids_path, "r", encoding="utf-8") as f:
+                subset_cfg = json.load(f)
+            subset_ids = subset_cfg.get("query_ids", [])
+            subset_id_set = set(int(i) for i in subset_ids)
+            if cfg.task.task_name == "mmlu":
+                # 对 MMLU：通常从 train_ds 中按 idx 过滤出子集作为测试集
+                def _keep_example(ex):
+                    return int(ex.get("idx", -1)) in subset_id_set
+
+                from datasets import Dataset
+
+                test_ds = train_ds.filter(_keep_example)
+                logger.info(
+                    f"Using custom MMLU test subset from {test_subset_ids_path}, "
+                    f"size={len(test_ds)}"
+                )
+            else:
+                logger.warning(
+                    f"test_subset_ids_path is set but custom subset handling "
+                    f"is only implemented for MMLU task (got {cfg.task.task_name})"
+                )
+        except Exception as e:
+            logger.error(f"Failed to apply test_subset_ids_path={test_subset_ids_path}: {e}")
 
     # 2. 读取 prompt 配置（供 retriever 和 interface 复用）
     prompt_template = cfg.task.get("template", None)
@@ -200,10 +230,30 @@ def main(cfg: DictConfig):
             debug_prefix_chars=int(lm_cfg.get("debug_prefix_chars", 160)),
         )
     else:
+        # rand 模式：可选地从 test_subset_ids_path 中读取 forbidden_ids，
+        # 让随机 ICD 不与 Stage1 JSON 中出现过的样本重合。
+        rand_forbidden: set[int] = set()
+        subset_cfg_path = cfg.get("test_subset_ids_path", None)
+        if subset_cfg_path:
+            try:
+                with open(subset_cfg_path, "r", encoding="utf-8") as f:
+                    subset_cfg = json.load(f)
+                # 若 build_mmlu_test_utils.py 同时导出了 forbidden_ids，则一并使用
+                forbidden_ids = subset_cfg.get("forbidden_ids", [])
+                rand_forbidden = {int(x) for x in forbidden_ids}
+                if rand_forbidden:
+                    logger.info(
+                        f"RandRetriever will avoid {len(rand_forbidden)} globally forbidden indices "
+                        f"loaded from {subset_cfg_path}"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to load forbidden_ids from {subset_cfg_path}: {e}")
+
         retriever = RandRetriever(
             train_ds=train_ds,
             nshot=cfg.retriever.nshot,
             seed=cfg.retriever.get("seed", 42),
+            forbidden_indices=rand_forbidden,
         )
     
     # 5. 初始化interface
@@ -248,6 +298,9 @@ def main(cfg: DictConfig):
                 test_sample=test_sample,
                 exclude_indices=[test_sample.get("idx")] if "idx" in test_sample else [],
             )
+            # Debug: only log first few samples' ICD indices
+            if idx < 20:
+                logger.info(f"[DEBUG] icd_indices for test sample {idx}: {icd_indices}")
             
             # 获取ICD数据
             icd_samples = [train_ds[i] for i in icd_indices]
