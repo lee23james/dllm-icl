@@ -17,11 +17,16 @@ LEVER_DEVICE="cuda:0"
 # Optional: limit samples (default: 200)
 MAX_SAMPLES=${MAX_SAMPLES:-200}
 
-
+# LeverLM checkpoint path (二选一):
+# 方式1 - 在脚本里写死：把下面改成你的 ckpt 绝对/相对路径，留空则用 config 里 ckpt_dir+default_cpk_key 自动找
+DEFAULT_CKPT_PATH=""
+# 方式2 - 运行时用环境变量覆盖: CKPT_PATH="/path/to/xxx.ckpt" bash scripts/run_icl_inference_mmlu_lever_lm.sh
+CKPT_PATH="${CKPT_PATH:-$DEFAULT_CKPT_PATH}"
 
 python icl_inference.py \
   retriever.type=lever_lm \
   retriever.nshot=3 \
   test_subset_ids_path=generated_icd_data/cache/test_500.json \
   lever_lm.device=${LEVER_DEVICE} \
-  max_samples=${MAX_SAMPLES}
+  max_samples=${MAX_SAMPLES} \
+  ${CKPT_PATH:+lever_lm.ckpt_path="${CKPT_PATH}"}

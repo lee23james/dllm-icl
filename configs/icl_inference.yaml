@@ -7,7 +7,7 @@ defaults:
 
 # Retriever 配置
 retriever:
-  type: rand  # rand | lever_lm
+  type: qwen_topk  # rand | lever_lm | qwen_topk
   nshot: 3
   seed: 42
 
@@ -34,7 +34,7 @@ output_dir: "./generated_icd_data/icl_inference_results"
 max_samples: 3  # 限制测试样本数（null=全部）
 
 # 可选：自定义测试子集（例如 generated_icd_data/cache/test_200.json）
-test_subset_ids_path: null
+test_subset_ids_path: "generated_icd_data/cache/test_200.json"
 
 # Debug helpers (disabled by default)
 debug:

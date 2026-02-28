@@ -22,7 +22,7 @@ project_root = os.path.dirname(current_script_path)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from open_mmicl.retriever import RandRetriever
+from open_mmicl.retriever import RandRetriever, QwenTopkRetriever
 from open_mmicl.retriever.lever_lm_retriever import LeverLMRetriever
 from open_mmicl.interface import LLaDAInterface
 from open_mmicl.metrics import GSM8KMetrics, MMLUMetrics
@@ -177,6 +177,8 @@ def main(cfg: DictConfig):
     # 4. 初始化 retriever
     logger.info("Initializing retriever...")
     retriever_type = cfg.retriever.get("type", "rand")
+    lever_lm_ckpt_tag = "na"  # 用于结果文件名，仅 lever_lm 时有意义
+    resolved_lever_lm_ckpt_path: Optional[str] = None
     if retriever_type == "lever_lm":
         # utils.py 与 utils/ 包同名，显式从 utils.py 加载函数避免导入冲突
         from importlib.machinery import SourceFileLoader
@@ -197,6 +199,11 @@ def main(cfg: DictConfig):
             default_key = lm_cfg.get("default_cpk_key", "min_vl")
             ckpt_path = get_lever_lm_path(ckpt_dir, default_key)
             logger.info(f"LeverLM checkpoint: {ckpt_path}")
+        resolved_lever_lm_ckpt_path = str(ckpt_path) if ckpt_path else None
+        try:
+            lever_lm_ckpt_tag = os.path.splitext(os.path.basename(str(ckpt_path).rstrip("/")))[0]
+        except Exception as _e:
+            logger.warning(f"Failed to parse lever_lm ckpt tag from {ckpt_path}: {_e}")
         emb_path = lm_cfg.get("embedding_path")
         if not emb_path or not os.path.exists(emb_path):
             raise ValueError(
@@ -228,6 +235,53 @@ def main(cfg: DictConfig):
             reverse_seq=lm_cfg.get("reverse_seq", False),
             debug=bool(lm_cfg.get("debug", False)),
             debug_prefix_chars=int(lm_cfg.get("debug_prefix_chars", 160)),
+        )
+    elif retriever_type == "qwen_topk":
+        # 基于 Qwen-Embedding 的 TopK 相似度检索：
+        # - 候选池：训练集
+        # - 全局排除：test_subset_ids_path 中的 query_ids + forbidden_ids
+        qwen_forbidden: set[int] = set()
+        subset_cfg_path = cfg.get("test_subset_ids_path", None)
+        if subset_cfg_path:
+            try:
+                with open(subset_cfg_path, "r", encoding="utf-8") as f:
+                    subset_cfg = json.load(f)
+                query_ids = subset_cfg.get("query_ids", [])
+                forbidden_ids = subset_cfg.get("forbidden_ids", [])
+                qwen_forbidden = {int(x) for x in list(query_ids) + list(forbidden_ids)}
+                if qwen_forbidden:
+                    logger.info(
+                        f"QwenTopkRetriever will avoid {len(qwen_forbidden)} indices "
+                        f"loaded from {subset_cfg_path} (query_ids + forbidden_ids)"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to load query_ids/forbidden_ids from {subset_cfg_path}: {e}")
+
+        if prompt_template_obj is None:
+            raise ValueError("qwen_topk retriever requires task.template to build embedding text.")
+
+        output_column = cfg.task.get("output_column", None)
+        query_text_extractor = lambda s: prompt_template_obj.generate_text_for_embedding(
+            s, output_column=output_column
+        )
+
+        # 复用 lever_lm 段中的 Qwen 配置（模型路径 / 设备 / batch size / embedding_path）
+        lm_cfg = cfg.get("lever_lm", {})
+        qwen_model_path = lm_cfg.get("qwen_model_path", "Qwen/Qwen3-Embedding-4B")
+        feature_cache = lm_cfg.get("embedding_path", None)
+
+        retriever = QwenTopkRetriever(
+            index_ds=train_ds,
+            qwen_model_path=qwen_model_path,
+            query_text_extractor=query_text_extractor,
+            nshot=cfg.retriever.nshot,
+            device=lm_cfg.get("device", "cuda:0"),
+            encode_batch_size=lm_cfg.get("batch_size", 64),
+            feature_cache=feature_cache,
+            overwrite_cache=bool(lm_cfg.get("overwrite_qwen_cache", False)),
+            # 为了“最相似的放最后”，这里固定 reverse_seq=True
+            reverse_seq=True,
+            forbidden_indices=qwen_forbidden,
         )
     else:
         # rand 模式：可选地从 test_subset_ids_path 中读取 forbidden_ids，
@@ -403,10 +457,36 @@ def main(cfg: DictConfig):
     # 8. 保存结果
     output_dir = Path(cfg.get("output_dir", "./icl_inference_results"))
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    output_path = output_dir / f"{cfg.task.task_name}_inference_results.json"
+
+    # 根据 retriever.type、retriever.nshot、max_samples、ckpt_path 构造更可读的文件名
+    retriever_type = cfg.retriever.get("type", "unknown")
+    nshot = cfg.retriever.get("nshot", "na")
+    max_samples = cfg.get("max_samples", None)
+    max_samples_str = str(max_samples) if max_samples is not None else "all"
+    lever_tag = lever_lm_ckpt_tag if retriever_type == "lever_lm" else "na"
+
+    filename = (
+        f"{cfg.task.task_name}_"
+        f"retr-{retriever_type}_"
+        f"nshot-{nshot}_"
+        f"max-{max_samples_str}_"
+        f"ckpt-{lever_tag}_inference_results.json"
+    )
+    output_path = output_dir / filename
     with open(output_path, 'w', encoding='utf-8') as f:
+        run_config = {
+            "task_name": cfg.task.task_name,
+            "retriever": {
+                "type": retriever_type,
+                "nshot": nshot,
+            },
+            "test_subset_ids_path": cfg.get("test_subset_ids_path", None),
+            "max_samples": max_samples,
+            # 仅当 retriever.type=lever_lm 时该字段才有意义；否则为 None
+            "ckpt_path": resolved_lever_lm_ckpt_path,
+        }
         json.dump({
+            "run_config": run_config,
             "metrics": batch_metrics,
             "results": results,
         }, f, ensure_ascii=False, indent=2)

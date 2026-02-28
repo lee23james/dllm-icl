@@ -14,7 +14,7 @@ from transformers import get_cosine_schedule_with_warmup
 
 import torch
 
-from lever_lm.utils import data_split, data_split_three_way
+from lever_lm.utils import data_split
 from utils import load_ds, fix_icd_json_query_last
 
 
@@ -168,16 +168,7 @@ class ICDSeqDataModule(pl.LightningDataModule):
         with open(data_files_path, "r") as f:
             generated_data = json.load(f)
 
-        # 支持两种划分方式：
-        # - 仅配置 train_ratio: 使用 data_split（二分，train/val）
-        # - 同时配置 train_ratio + val_ratio: 使用 data_split_three_way（三分，train/val/test）
-        val_ratio = getattr(cfg, "val_ratio", None)
-        if val_ratio is not None:
-            self.train_data, self.val_data, self.test_data = data_split_three_way(
-                generated_data, cfg.train_ratio, val_ratio
-            )
-        else:
-            self.train_data, self.val_data = data_split(generated_data, cfg.train_ratio)
+        self.train_data, self.val_data = data_split(generated_data, cfg.train_ratio)
         self.embedding_dict = _load_embedding_dict(cfg.embedding_path)
 
         # dataset length for special token ids and model vocab
