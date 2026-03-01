@@ -1,0 +1,5 @@
+version: "local" 
+train_path: "data/race/middle/train-00000-of-00001.parquet"
+test_path: "data/race/middle/test-00000-of-00001.parquet"
+template: ${infer_model.prompt_templates.race_prompt_template}  # 引用infer_model中定义的RACE_MIDDLE prompt模板 
+name: "race_middle"

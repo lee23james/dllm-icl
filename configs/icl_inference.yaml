@@ -12,8 +12,23 @@ retriever:
   seed: 42
 
 # Query 位置
-#这里是暂时的,正常的分类起就是放在前面的
+# rand/qwen_topk 可单独使用：此处固定位置（0=最后）。lever_lm 必须配合 insertion_selector，不用此固定值
 query_position: 0  # 0=最后，nshot=最前
+
+# InsertionSelector（第二个分类器：预测 query 在 ICD 中的插入位置）
+# - rand/qwen_topk：可单独使用（仅用上面 query_position）；也可 enabled=true 在随机/相似度采样基础上预测位置
+# - lever_lm：必须 enabled=true（第一个分类器不能单独使用），串联：LeverLM 选 ICD + Selector 预测位置
+# 位置预测采用方案 A：不依赖 test.pt，按样本用 PromptTemplate + encode_text_qwen 得到向量再送入 Selector
+insertion_selector:
+  enabled: false
+  ckpt_dir: "generated_icd_data/checkpoints/insertion_selector"
+  ckpt_path: null  # 若指定则优先使用；否则从 ckpt_dir 按 default_cpk_key 查找
+  default_cpk_key: "min_vl"
+  qwen_model_path: null  # 为 null 时复用 lever_lm.qwen_model_path
+  device: "cuda:0"
+  emb_dim: 2560
+  n_head: 16
+  dropout: 0.2
 
 # LeverLM 配置（当 retriever.type=lever_lm 时使用）
 #这里我先临时使用

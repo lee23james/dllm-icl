@@ -1,0 +1,21 @@
+task_name: "race"
+split_token: "\n\n"  # ICD之间的分隔符
+template: ${infer_model.prompt_templates.race_prompt_template} 
+column_token_map:
+  question: "<Q>"
+  answer: "<A>"
+  choice_a: "<a>"
+  choice_b: "<b>"
+  choice_c: "<c>"
+  choice_d: "<d>"
+
+input_columns: ["question", "choice_a", "choice_b", "choice_c", "choice_d"]
+output_column: "answer"
+mask_column_token_map: "answer"
+
+gen_args:
+  gen_length: 2
+  steps: 2
+  block_length: 2
+  mask_length: 2
+  mc_num: 1

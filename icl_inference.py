@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
+import torch
 import hydra
 from omegaconf import DictConfig
 from loguru import logger
@@ -29,6 +30,8 @@ from open_mmicl.metrics import GSM8KMetrics, MMLUMetrics
 from open_mmicl.icl_interface import DLLMICLInferencer
 from open_mmicl.prompt_template import PromptTemplate
 from lever_lm.load_ds_utils import load_gsm8k_ds, load_mmlu_ds
+from lever_lm.models import InsertionSelector
+from lever_lm.utils import encode_text_qwen
 from utils import load_ds
 #这里是第二阶段,需要进行推理(其实也需要batch和分类)
 #这里我并没有进行详细的检查
@@ -42,10 +45,9 @@ def main(cfg: DictConfig):
     logger.info("Stage 2: ICL Inference")
     logger.info("="*80)
     
-    # 1. 加载数据集
+    # 1. 加载数据集（与具体数据集解耦：由 task_name + dataset 配置决定）
     logger.info("Loading datasets...")
     if cfg.task.task_name == "gsm8k":
-        # 分别加载 train 和 test 数据集
         train_ds = load_gsm8k_ds(
             version=cfg.dataset.version,
             data_path=cfg.dataset.train_path,
@@ -54,14 +56,15 @@ def main(cfg: DictConfig):
         test_ds = load_gsm8k_ds(
             version=cfg.dataset.version,
             data_path=cfg.dataset.test_path,
-            split="validation",  # 注意：test数据可能存储在validation split中
+            split="validation",
         )
     elif cfg.task.task_name == "mmlu":
-        # MMLU 任务：使用 load_ds 统一接口
         train_ds = load_ds(cfg, split="train")
-        test_ds = load_ds(cfg, split="validation")  # MMLU 的 test 数据在 validation split
+        test_ds = load_ds(cfg, split="validation")
     else:
-        raise ValueError(f"Unsupported task: {cfg.task.task_name}")
+        # 通用分支：任意 task 使用 load_ds(cfg)，由 dataset 配置提供 train_path / test_path 等
+        train_ds = load_ds(cfg, split="train")
+        test_ds = load_ds(cfg, split="validation")
     
     logger.info(f"Train dataset size: {len(train_ds)}")
     logger.info(f"Test dataset size: {len(test_ds)}")
@@ -74,23 +77,14 @@ def main(cfg: DictConfig):
                 subset_cfg = json.load(f)
             subset_ids = subset_cfg.get("query_ids", [])
             subset_id_set = set(int(i) for i in subset_ids)
-            if cfg.task.task_name == "mmlu":
-                # 对 MMLU：通常从 train_ds 中按 idx 过滤出子集作为测试集
-                def _keep_example(ex):
-                    return int(ex.get("idx", -1)) in subset_id_set
 
-                from datasets import Dataset
+            def _keep_example(ex):
+                return int(ex.get("idx", -1)) in subset_id_set
 
-                test_ds = train_ds.filter(_keep_example)
-                logger.info(
-                    f"Using custom MMLU test subset from {test_subset_ids_path}, "
-                    f"size={len(test_ds)}"
-                )
-            else:
-                logger.warning(
-                    f"test_subset_ids_path is set but custom subset handling "
-                    f"is only implemented for MMLU task (got {cfg.task.task_name})"
-                )
+            test_ds = train_ds.filter(_keep_example)
+            logger.info(
+                f"Using custom test subset from {test_subset_ids_path}, size={len(test_ds)}"
+            )
         except Exception as e:
             logger.error(f"Failed to apply test_subset_ids_path={test_subset_ids_path}: {e}")
 
@@ -195,7 +189,7 @@ def main(cfg: DictConfig):
         lm_cfg = cfg.get("lever_lm", {})
         ckpt_path = lm_cfg.get("ckpt_path")
         if not ckpt_path or not os.path.exists(ckpt_path):
-            ckpt_dir = lm_cfg.get("ckpt_dir", "generated_icd_data/model_cpk/mmlu/debug")
+            ckpt_dir = lm_cfg.get("ckpt_dir", "generated_icd_data/model_cpk/lever_lm")
             default_key = lm_cfg.get("default_cpk_key", "min_vl")
             ckpt_path = get_lever_lm_path(ckpt_dir, default_key)
             logger.info(f"LeverLM checkpoint: {ckpt_path}")
@@ -309,6 +303,57 @@ def main(cfg: DictConfig):
             seed=cfg.retriever.get("seed", 42),
             forbidden_indices=rand_forbidden,
         )
+
+    # 4b. InsertionSelector（第二个分类器）
+    # rand / qwen_topk：可单独使用（query 放最后，query_position=0）；也可启用 insertion_selector 预测位置。
+    # lever_lm：必须启用 insertion_selector（第一个分类器不能单独使用），要么串联选 ICD+预测位置，要么在 rand/qwen_topk 采样的 ICD 上仅用 Selector 预测位置。
+    insertion_selector_obj = None
+    is_cfg = cfg.get("insertion_selector", {})
+    if retriever_type == "lever_lm":
+        if not is_cfg.get("enabled", False):
+            raise ValueError(
+                "retriever.type=lever_lm 时必须启用 insertion_selector（第一个分类器不能单独使用）。"
+                "请在 config 中设置 insertion_selector.enabled=true 并配置 ckpt_path/ckpt_dir。"
+            )
+    if is_cfg.get("enabled", False):
+        if prompt_template_obj is None:
+            raise ValueError(
+                "insertion_selector.enabled=true 需要 task.template 以格式化 query 和 ICD 文本（用于 encode_text_qwen）。"
+            )
+        ckpt_path = is_cfg.get("ckpt_path")
+        if not ckpt_path or not os.path.exists(str(ckpt_path)):
+            import glob
+            ckpt_dir = is_cfg.get("ckpt_dir", "generated_icd_data/checkpoints/insertion_selector")
+            default_key = is_cfg.get("default_cpk_key", "min_vl")
+            if default_key == "min_vl":
+                pattern = os.path.join(ckpt_dir, "min_vl-*.ckpt")
+            elif default_key == "min_tl":
+                pattern = os.path.join(ckpt_dir, "min_tl-*.ckpt")
+            else:
+                last_path = os.path.join(ckpt_dir, "last.ckpt")
+                pattern = os.path.join(ckpt_dir, "last*.ckpt")
+                if os.path.exists(last_path):
+                    ckpt_path = last_path
+            if ckpt_path is None or not os.path.exists(str(ckpt_path)):
+                candidates = glob.glob(pattern)
+                ckpt_path = max(candidates, key=os.path.getmtime) if candidates else None
+            if ckpt_path:
+                logger.info(f"InsertionSelector checkpoint: {ckpt_path}")
+        if not ckpt_path or not os.path.exists(str(ckpt_path)):
+            raise FileNotFoundError(
+                f"InsertionSelector checkpoint not found. Set insertion_selector.ckpt_path or insertion_selector.ckpt_dir (default_cpk_key={is_cfg.get('default_cpk_key', 'min_vl')})."
+            )
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        state = ckpt.get("state_dict", ckpt)
+        new_state = {k.replace("model.", ""): v for k, v in state.items() if k.startswith("model.")}
+        emb_dim = int(is_cfg.get("emb_dim", 2560))
+        n_head = int(is_cfg.get("n_head", 16))
+        dropout = float(is_cfg.get("dropout", 0.2))
+        insertion_selector_obj = InsertionSelector(emb_dim=emb_dim, n_head=n_head, dropout=dropout)
+        insertion_selector_obj.load_state_dict(new_state, strict=True)
+        insertion_selector_obj.to(is_cfg.get("device", "cuda:0"))
+        insertion_selector_obj.eval()
+        logger.info("InsertionSelector loaded (query position will be predicted per sample).")
     
     # 5. 初始化interface
     logger.info("Initializing interface...")
@@ -333,7 +378,8 @@ def main(cfg: DictConfig):
     elif cfg.task.task_name == "mmlu":
         metrics = MMLUMetrics()
     else:
-        raise ValueError(f"Unsupported task for metrics: {cfg.task.task_name}")
+        metrics = MMLUMetrics()  # 其他 task 暂用 MMLUMetrics
+        logger.info(f"Using MMLUMetrics for task_name={cfg.task.task_name}")
     
     # 6. 执行推理
     logger.info("Starting inference...")
@@ -358,9 +404,40 @@ def main(cfg: DictConfig):
             
             # 获取ICD数据
             icd_samples = [train_ds[i] for i in icd_indices]
-            
+            nshot = len(icd_samples)
+
+            # 确定 query 位置：方案 A，不依赖预计算 test.pt
+            # 若启用 InsertionSelector：用 PromptTemplate 得到 query/ICD 文本 -> encode_text_qwen -> Selector -> query_position = nshot - pred
+            # 否则（rand/qwen_topk 单独使用）：query 放最后，query_position=0
+            if insertion_selector_obj is not None:
+                output_column = cfg.task.get("output_column", None)
+                query_text = prompt_template_obj.generate_text_for_embedding(
+                    test_sample, output_column=output_column
+                )
+                icd_texts = [prompt_template_obj.generate_ice_item(s) for s in icd_samples]
+                text_list = [query_text] + icd_texts
+                is_cfg = cfg.get("insertion_selector", {})
+                qwen_path = is_cfg.get("qwen_model_path") or cfg.get("lever_lm", {}).get(
+                    "qwen_model_path", "Qwen/Qwen3-Embedding-4B"
+                )
+                feats = encode_text_qwen(
+                    text_list=text_list,
+                    model_name=qwen_path,
+                    device=is_cfg.get("device", "cuda:0"),
+                    batch_size=len(text_list),
+                    normalize=True,
+                )
+                device_sel = torch.device(is_cfg.get("device", "cuda:0"))
+                query_emb = feats[0:1].to(device_sel)
+                icd_embs = feats[1:].unsqueeze(0).to(device_sel)
+                with torch.no_grad():
+                    out = insertion_selector_obj(query_emb, icd_embs)
+                pred = out["logits"].argmax(dim=-1).item()
+                query_position = nshot - pred  # Selector gap 0=最前，gap nshot=最后
+            else:
+                query_position = cfg.get("query_position", 0)  # rand/qwen_topk 单独使用时默认 0=最后
+
             # 构建prompt
-            query_position = cfg.get("query_position", 0)  # 0表示最后
             prompt = interface.build_prompt(
                 ice_samples=icd_samples,
                 test_sample=test_sample,
@@ -411,7 +488,7 @@ def main(cfg: DictConfig):
             # 获取真实答案
             ground_truth = test_sample.get("answer", "")
 
-            # Safety-net: ensure MMLU ground_truth is mapped to A/B/C/D
+            # 仅对 MMLU 做 0/1/2/3 -> A/B/C/D 的规范化，其他 task 保持原样
             if cfg.task.task_name == "mmlu":
                 gt = str(ground_truth).strip()
                 idx2label = {"0": "A", "1": "B", "2": "C", "3": "D"}
@@ -420,9 +497,8 @@ def main(cfg: DictConfig):
                 elif gt in idx2label:
                     ground_truth = idx2label[gt]
                 else:
-                    # keep as string, metrics will mark it incorrect if invalid
                     ground_truth = gt
-            
+
             # 评估
             eval_result = metrics.evaluate_single(generated_text, ground_truth)
             

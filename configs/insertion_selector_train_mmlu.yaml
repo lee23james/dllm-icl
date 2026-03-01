@@ -1,0 +1,36 @@
+#这个比较特别,就是为了进行计算
+# InsertionSelector 训练配置（MMLU）
+# 训练集 = generated_data JSON（mmlu）；题库 parquet 与预计算 .pt 对应
+
+data:
+  # 训练集 JSON（MMLU）
+  json_path: "generated_icd_data/generated_data/mmlu-mmlu-llada-random_sampler-scorer_infoscore-construct_order_no_order-beam_size_5-few_shot_3-candidate_num_64-sample_num_5000-mc_num_1.json"
+  # 题库 parquet（须与生成 embedding_cache_path 的 .pt 所用 parquet 一致）
+  train_path: "/home/lzh/llada-icl/data/MMLU/auxiliary_train/train-00000-of-00001.parquet"
+  val_ratio: 0.2
+  val_split_seed: 42
+
+embedding:
+  # 预计算得到的 .pt 路径（MMLU TextFeatures，当前 .pt 为 2560 维，与 Qwen3-Embedding 部分版本一致）
+  embedding_cache_path: "generated_icd_data/embedding_cache/mmlu-mmlu-Qwen3-Embedding-4B-TextFeatures.pt"
+  qwen_model_path: "/home/lzh/.cache/modelscope/hub/models/Qwen/Qwen3-Embedding-4B"
+  emb_dim: 2560
+
+model:
+  emb_dim: 2560
+  n_head: 16
+  dropout: 0.2
+
+training:
+  batch_size: 32
+  max_epochs: 20
+  lr: 1e-4  # 2560 维模型建议较低 lr，避免 GELU 饱和；若仍不稳可试 5e-5
+  weight_decay: 5.0e-2
+  warm_steps: 0.1
+  loss_weight_by_score: false
+  # 多卡并行：使用 GPU 1、2、3；若只写一个数如 [1] 则单卡；不写或留空则 devices=auto
+  gpu_ids: [1,2,3]
+
+output:
+  checkpoint_dir: "generated_icd_data/checkpoints/insertion_selector_mmlu"
+  save_top_k: 2

@@ -25,7 +25,7 @@ torch_dtype: "bfloat16"  # 模型精度：bfloat16, float16, float32
 prompt_templates:
   gsm8k_prompt_template: "question: <Q>\n<answer>\n<A>\n</answer>"  # GSM8K prompt模板，<Q>会被question替换，<A>会被完整answer替换（query时<A>用mask替换）
   mmlu_prompt_template: "<Q>\nA. <a>\nB. <b>\nC. <c>\nD. <d>\nAnswer: <A>"  # MMLU多选题模板
-
+  race_prompt_template: "<Q>\nA. <a>\nB. <b>\nC. <c>\nD. <d>\nAnswer: <A>"  # RACE多选题模板
 
 
 
