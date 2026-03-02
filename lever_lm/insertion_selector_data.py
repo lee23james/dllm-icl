@@ -35,6 +35,22 @@ def format_ceval_cmmlu_sample(sample: Dict[str, Any]) -> str:
     return f"{question}\n{options_text}".strip()
 
 
+def format_subj_sample(sample: Dict[str, Any]) -> str:
+    """
+    将 Subj 单条样本格式化为用于 Qwen 嵌入的文本。
+    必须使用映射后的 answer（subjective/objective），与 task 模板一致。
+    """
+    for key in ("sentence", "answer"):
+        if key not in sample:
+            raise ValueError(
+                f"Sample missing required key '{key}' for subj formatting. "
+                f"Keys: {list(sample.keys())}"
+            )
+    sentence = str(sample["sentence"]).strip()
+    answer = str(sample["answer"]).strip()
+    return f"Input: {sentence}\nType: {answer}".strip()
+
+
 def parse_json_to_samples(
     json_path: str | Path,
 ) -> List[Tuple[int, List[int], int, float]]:

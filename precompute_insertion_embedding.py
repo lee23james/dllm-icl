@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-预计算 InsertionSelector 训练用嵌入：对题库 parquet 按行格式化为文本并用 Qwen 编码，保存为 .pt。
-支持 MMLU（load_mmlu_ds + format_ceval_cmmlu_sample）。运行后训练时仅需加载 .pt，无需再加载 Qwen。
+预计算 InsertionSelector 训练用嵌入：对题库按行格式化为文本并用 Qwen 编码，保存为 .pt。
+支持 MMLU（load_mmlu_ds + format_ceval_cmmlu_sample）和 Subj（load_subj_ds + format_subj_sample）。
+运行后训练时仅需加载 .pt，无需再加载 Qwen。
 """
 import argparse
 import sys
@@ -16,24 +17,31 @@ import torch
 import yaml
 from loguru import logger
 
-from lever_lm.insertion_selector_data import format_ceval_cmmlu_sample
-from lever_lm.load_ds_utils import load_mmlu_ds
+from lever_lm.insertion_selector_data import format_ceval_cmmlu_sample, format_subj_sample
+from lever_lm.load_ds_utils import load_mmlu_ds, load_subj_ds
 from lever_lm.utils import encode_text_qwen
 
 
 def main():
     parser = argparse.ArgumentParser(description="Precompute embedding cache for InsertionSelector training.")
     parser.add_argument(
+        "--task",
+        type=str,
+        default="mmlu",
+        choices=["mmlu", "subj"],
+        help="Task type: mmlu or subj (determines loader and formatter)",
+    )
+    parser.add_argument(
         "--config",
         type=str,
-        default=str(PROJECT_ROOT / "configs" / "insertion_selector_train_mmlu.yaml"),
-        help="Path to insertion_selector_train_mmlu.yaml",
+        default=None,
+        help="Path to config (default: insertion_selector_train_<task>.yaml)",
     )
     parser.add_argument(
         "--train_path",
         type=str,
         default=None,
-        help="Override config: parquet path (relative to project root)",
+        help="Override config: train data path (parquet for mmlu, jsonl for subj)",
     )
     parser.add_argument(
         "--embedding_cache_path",
@@ -61,13 +69,16 @@ def main():
     )
     args = parser.parse_args()
 
-    with open(args.config, "r", encoding="utf-8") as f:
+    config_path = args.config or str(PROJECT_ROOT / "configs" / f"insertion_selector_train_{args.task}.yaml")
+    with open(config_path, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
     data_cfg = cfg.get("data", {})
     emb_cfg = cfg.get("embedding", {})
 
-    train_path = args.train_path or data_cfg.get("train_path", "data/MMLU/auxiliary_train/train-00000-of-00001.parquet")
+    train_path = args.train_path or data_cfg.get("train_path")
+    if not train_path:
+        train_path = "data/MMLU/auxiliary_train/train-00000-of-00001.parquet" if args.task == "mmlu" else "data/subj/train.jsonl"
     embedding_cache_path = args.embedding_cache_path or emb_cfg.get("embedding_cache_path")
     qwen_model_path = args.qwen_model_path or emb_cfg.get("qwen_model_path")
 
@@ -79,15 +90,27 @@ def main():
     out_full = Path(embedding_cache_path) if Path(embedding_cache_path).is_absolute() else PROJECT_ROOT / embedding_cache_path
     out_full.parent.mkdir(parents=True, exist_ok=True)
 
-    logger.info(f"Loading parquet: {train_full}")
-    ds = load_mmlu_ds(version="local", data_path=str(train_full), split="train")
-    n = len(ds)
+    if args.task == "mmlu":
+        logger.info(f"Loading parquet: {train_full}")
+        ds = load_mmlu_ds(version="local", data_path=str(train_full), split="train")
+        format_fn = format_ceval_cmmlu_sample
+    else:
+        # subj
+        label_mapping = data_cfg.get("label_mapping") or {"0": "subjective", "1": "objective"}
+        logger.info(f"Loading subj JSONL: {train_full} (label_mapping={label_mapping})")
+        ds = load_subj_ds(
+            data_path=str(train_full),
+            split="train",
+            label_mapping=label_mapping,
+        )
+        format_fn = format_subj_sample
 
+    n = len(ds)
     logger.info(f"Formatting {n} samples...")
     texts = []
     for i in range(n):
         sample = ds[i]
-        text = format_ceval_cmmlu_sample(sample)
+        text = format_fn(sample)
         texts.append(text)
 
     logger.info(f"Encoding with Qwen from {qwen_model_path}...")

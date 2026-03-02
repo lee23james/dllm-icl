@@ -299,3 +299,42 @@ def load_mmlu_ds(
     raise ValueError(
         "load_mmlu_ds requires either (train_path, val_path) or (data_path, split) parameters"
     )
+
+
+def load_subj_ds(
+    data_path: str,
+    split: str = "train",
+    label_mapping: dict | None = None,
+):
+    """
+    加载 Subj 数据集（JSONL 格式）。
+
+    每行格式：{"sentence": "...", "label": "0"|"1"}。
+    通过 label_mapping 将 label 数字转为含义文本（如 subjective/objective），
+    供 prompt 与蒙特卡洛 InfoScore 使用。
+
+    Args:
+        data_path: JSONL 文件路径（如 data/subj/train.jsonl）
+        split: split 名称（仅用于 load_dataset 的 key，实际单文件）
+        label_mapping: {"0": "subjective", "1": "objective"}，必须提供
+
+    Returns:
+        Dataset，含 idx, isquery, sentence, label, answer
+    """
+    if label_mapping is None:
+        label_mapping = {"0": "subjective", "1": "objective"}
+    label_mapping = {str(k): str(v) for k, v in label_mapping.items()}
+
+    data_files = {split: data_path}
+    ds = load_dataset("json", data_files=data_files)
+    ds_split = ds[split]
+
+    ds_split = ds_split.add_column("idx", list(range(len(ds_split))))
+    ds_split = ds_split.add_column("isquery", [0] * len(ds_split))
+
+    def _add_answer(example):
+        lab = str(example.get("label", ""))
+        return {"answer": label_mapping.get(lab, lab)}
+
+    ds_split = ds_split.map(_add_answer, remove_columns=[])
+    return ds_split

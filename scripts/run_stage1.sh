@@ -1,7 +1,7 @@
 python /home/lzh/llada-icl/generate_data_main.py \
-  sampler.anchor_sample_num=200 \
+  sampler.anchor_sample_num=5000 \
   sampler.candidate_num=64 \
-  few_shot_num=4 \
+  few_shot_num=2 \
   beam_size=5 \
   mc_num=1 \
   batch_size=1 \

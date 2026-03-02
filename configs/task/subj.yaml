@@ -1,0 +1,22 @@
+# Subj 主观/客观二分类，label 通过 label_mapping 转为含义文本供 prompt 与蒙特卡洛使用
+task_name: "subj"
+split_token: "\n\n"
+
+# label 数字 -> 含义：蒙特卡洛看的是 subjective/objective 概率
+label_mapping: {'0': 'subjective', '1': 'objective'}
+
+template: ${infer_model.prompt_templates.subj_prompt_template}
+column_token_map:
+  sentence: "<S>"
+  answer: "<A>"  # 映射后的 subjective/objective
+
+input_columns: ["sentence"]
+output_column: "answer"
+mask_column_token_map: "answer"
+
+gen_args:
+  gen_length: 2
+  steps: 2
+  block_length: 2
+  mask_length: 2
+  mc_num: 1

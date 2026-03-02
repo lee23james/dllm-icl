@@ -24,6 +24,11 @@ EMBEDDING_PATH="${EMBEDDING_PATH:-}"
 # 例: INSERTION_CKPT_PATH="generated_icd_data/checkpoints/insertion_selector_mmlu/min_vl-xxx.ckpt"
 INSERTION_CKPT_PATH="${INSERTION_CKPT_PATH:-}"
 
+EXTRA_ARGS=()
+[ -n "${CKPT_PATH}" ] && EXTRA_ARGS+=(lever_lm.ckpt_path="${CKPT_PATH}")
+[ -n "${EMBEDDING_PATH}" ] && EXTRA_ARGS+=(lever_lm.embedding_path="${EMBEDDING_PATH}")
+[ -n "${INSERTION_CKPT_PATH}" ] && EXTRA_ARGS+=(insertion_selector.ckpt_path="${INSERTION_CKPT_PATH}")
+
 python icl_inference.py \
   retriever.type=lever_lm \
   insertion_selector.enabled=true \
@@ -32,6 +37,4 @@ python icl_inference.py \
   lever_lm.device="${LEVER_DEVICE}" \
   insertion_selector.device="${LEVER_DEVICE}" \
   max_samples="${MAX_SAMPLES}" \
-  ${CKPT_PATH:+lever_lm.ckpt_path="${CKPT_PATH}"} \
-  ${EMBEDDING_PATH:+lever_lm.embedding_path="${EMBEDDING_PATH}"} \
-  ${INSERTION_CKPT_PATH:+insertion_selector.ckpt_path="${INSERTION_CKPT_PATH}"}
+  "${EXTRA_ARGS[@]}"

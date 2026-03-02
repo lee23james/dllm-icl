@@ -7,6 +7,7 @@
 import os
 import sys
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
@@ -502,12 +503,13 @@ def main(cfg: DictConfig):
             # 评估
             eval_result = metrics.evaluate_single(generated_text, ground_truth)
             
-            # 保存结果
+            # 保存结果（query_position 采用 build_prompt 的约定：0=query 在最后，nshot=在最前；
+            # 与 InsertionSelector 的 gap 约定相反：selector 的 pred 0=最前、nshot=最后，已用 query_position=nshot-pred 转换）
             result = {
                 "test_idx": idx,
                 "test_sample_idx": test_sample.get("idx", idx),
                 "icd_indices": icd_indices,
-                "query_position": query_position,
+                "query_position": query_position,  # 0=最后，nshot=最前
                 "predicted": predicted_answer,
                 "ground_truth": ground_truth,
                 "is_correct": eval_result["is_correct"],
@@ -530,11 +532,15 @@ def main(cfg: DictConfig):
     logger.info(f"Accuracy: {batch_metrics['accuracy']:.4f}")
     logger.info(f"Correct: {batch_metrics['correct_count']}/{batch_metrics['total_count']}")
     
-    # 8. 保存结果
-    output_dir = Path(cfg.get("output_dir", "./icl_inference_results"))
+    # 8. 保存结果：output_dir/当前日期/ 下，文件名末尾带当前时间（时-分-秒）
+    base_output_dir = Path(cfg.get("output_dir", "./icl_inference_results"))
+    now = datetime.now()
+    date_dir = now.strftime("%Y-%m-%d")
+    time_suffix = now.strftime("%H-%M-%S")
+    output_dir = base_output_dir / date_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 根据 retriever.type、retriever.nshot、max_samples、ckpt_path 构造更可读的文件名
+    # 根据 retriever.type、retriever.nshot、max_samples、ckpt_path 构造更可读的文件名，末尾加时间
     retriever_type = cfg.retriever.get("type", "unknown")
     nshot = cfg.retriever.get("nshot", "na")
     max_samples = cfg.get("max_samples", None)
@@ -546,7 +552,7 @@ def main(cfg: DictConfig):
         f"retr-{retriever_type}_"
         f"nshot-{nshot}_"
         f"max-{max_samples_str}_"
-        f"ckpt-{lever_tag}_inference_results.json"
+        f"ckpt-{lever_tag}_inference_results_{time_suffix}.json"
     )
     output_path = output_dir / filename
     with open(output_path, 'w', encoding='utf-8') as f:
