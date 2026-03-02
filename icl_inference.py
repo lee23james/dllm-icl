@@ -27,13 +27,13 @@ if project_root not in sys.path:
 from open_mmicl.retriever import RandRetriever, QwenTopkRetriever
 from open_mmicl.retriever.lever_lm_retriever import LeverLMRetriever
 from open_mmicl.interface import LLaDAInterface
-from open_mmicl.metrics import GSM8KMetrics, MMLUMetrics
-from open_mmicl.icl_interface import DLLMICLInferencer
+from open_mmicl.metrics import GSM8KMetrics, MMLUMetrics, SubjMetrics
 from open_mmicl.prompt_template import PromptTemplate
 from lever_lm.load_ds_utils import load_gsm8k_ds, load_mmlu_ds
 from lever_lm.models import InsertionSelector
 from lever_lm.utils import encode_text_qwen
 from utils import load_ds
+from llada_gsm8k_eval.llada_inference import create_llada_inference
 #这里是第二阶段,需要进行推理(其实也需要batch和分类)
 #这里我并没有进行详细的检查
 
@@ -99,16 +99,23 @@ def main(cfg: DictConfig):
     if mask_column_token_map is not None and isinstance(mask_column_token_map, dict):
         mask_column_token_map = dict(mask_column_token_map)
 
-    mask_length = cfg.infer_model.get("mask_length", 256)
+    # 2. 读取生成相关配置：这里只支持通过 task.gen_args 配置，缺少就直接报错
     task_gen_args = cfg.task.get("gen_args", None)
-    if task_gen_args is not None and "mask_length" in task_gen_args:
-        try:
-            mask_length = int(task_gen_args.mask_length)
-            logger.info(f"Using mask_length from task.gen_args: {mask_length}")
-        except Exception as e:
-            logger.warning(
-                f"Failed to read mask_length from task.gen_args, fallback to infer_model.mask_length. Error: {e}"
-            )
+    if task_gen_args is None:
+        raise ValueError("configs/task/<task>.yaml 中必须提供 task.gen_args，缺少则无法进行 ICL 推理。")
+
+    try:
+        mask_length = int(task_gen_args.mask_length)
+        steps = int(task_gen_args.steps)
+        block_length = int(task_gen_args.block_length)
+    except Exception as e:
+        raise ValueError(f"读取 task.gen_args 中的 mask_length/steps/block_length 失败: {e}")
+
+    # 生成其它超参：只从 infer_model.generation_kwargs 里读，读不到就用安全默认值
+    gen_cfg = cfg.infer_model.get("generation_kwargs", {}) or {}
+    temperature = float(gen_cfg.get("temperature", 0.0))
+    cfg_scale = float(gen_cfg.get("cfg_scale", 0.0))
+    remask_strategy = gen_cfg.get("remasking", "low_confidence")
 
     prompt_template_obj = None
     if prompt_template is not None:
@@ -168,6 +175,17 @@ def main(cfg: DictConfig):
         logger.error(f"Failed to load model: {e}")
         logger.error("Please check your model_path configuration in configs/infer_model/llada.yaml")
         return
+
+    # 基于已加载的 model/tokenizer 创建统一的 LLaDAInference 封装，后面统一用它来做生成
+    llada_infer = create_llada_inference(
+        model_path=model_path,
+        device=str(device),
+        tokenizer=tokenizer,
+        model=model,
+        mask_id=cfg.infer_model.mask_id,
+        max_length=cfg.infer_model.get("max_length", 4096),
+        torch_dtype=getattr(torch, cfg.infer_model.get("torch_dtype", "bfloat16")),
+    )
     
     # 4. 初始化 retriever
     logger.info("Initializing retriever...")
@@ -356,10 +374,8 @@ def main(cfg: DictConfig):
         insertion_selector_obj.eval()
         logger.info("InsertionSelector loaded (query position will be predicted per sample).")
     
-    # 5. 初始化interface
+    # 5. 初始化 interface（只用于构建 prompt / 解析答案，不再自己实现生成逻辑）
     logger.info("Initializing interface...")
-
-    
     interface = LLaDAInterface(
         model=model,
         tokenizer=tokenizer,
@@ -378,6 +394,9 @@ def main(cfg: DictConfig):
         metrics = GSM8KMetrics()
     elif cfg.task.task_name == "mmlu":
         metrics = MMLUMetrics()
+    elif cfg.task.task_name in ("subj", "trec"):
+        # subj / trec 都是「标签文本是否出现在生成文本中」的分类任务
+        metrics = SubjMetrics()
     else:
         metrics = MMLUMetrics()  # 其他 task 暂用 MMLUMetrics
         logger.info(f"Using MMLUMetrics for task_name={cfg.task.task_name}")
@@ -459,32 +478,32 @@ def main(cfg: DictConfig):
                     logger.info(prompt)
                 logger.info("=" * 80)
             
-            # Tokenize
-            prompt_tensor = interface.tokenize_prompt(prompt)
-
-            # Debug: show mask token positions in tokenized prompt (first sample only)
-            if debug_cfg and debug_cfg.get("print_prompt", False) and idx == 0:
-                try:
-                    mask_id = getattr(interface, "mask_id", None)
-                    if mask_id is not None:
-                        mask_pos = (prompt_tensor == mask_id).nonzero(as_tuple=False)
-                        # mask_pos: shape (num_masks, 2) where [:, 1] are token indices
-                        pos_list = mask_pos[:, 1].tolist() if mask_pos.numel() else []
-                        logger.info(f"[DEBUG] mask_id={mask_id}, mask_positions={pos_list}")
-                except Exception as _e:
-                    logger.warning(f"[DEBUG] failed to compute mask positions: {_e}")
+            # 生成：直接复用 llada_gsm8k_eval/llada_inference.py 中的 LLaDAInference 逻辑
+            # 只支持通过 task.gen_args 配置的 mask_length / steps / block_length，其它复杂用法一律不处理
+            try:
+                generated_text = llada_infer.generate_text(
+                    prompt=prompt,
+                    answer_length=mask_length,
+                    sampling_steps=steps,
+                    block_length=block_length,
+                    remask_strategy=remask_strategy,
+                    temperature=temperature,
+                    cfg_scale=cfg_scale,
+                    stop_tokens=None,
+                )
+            except Exception as _e:
+                logger.error(f"LLaDAInference.generate_text 失败 (test sample {idx}): {_e}")
+                raise
             
-            # 生成（传入生成参数）
-            gen_kwargs = cfg.infer_model.get("generation_kwargs", {})
-            if not gen_kwargs and cfg.task.get("gen_args"):
-                gen_kwargs = dict(cfg.task.gen_args)
-            output_tensor = interface.generate(prompt_tensor, **gen_kwargs)
-            
-            # 解码
-            generated_text = interface.decode_output(output_tensor)
-            
-            # 提取答案
-            predicted_answer = interface.extract_answer(generated_text)
+            # 提取预测答案（记录在 JSON 里，便于人工检查）
+            if cfg.task.task_name == "mmlu":
+                # 直接按 MMLU 规则从答案片段里抽取 A/B/C/D
+                predicted_answer = MMLUMetrics.extract_choice(generated_text)
+                if not predicted_answer:
+                    predicted_answer = generated_text
+            else:
+                # 其他任务暂时沿用通用的 extract_answer 逻辑
+                predicted_answer = interface.extract_answer(generated_text)
             
             # 获取真实答案
             ground_truth = test_sample.get("answer", "")
@@ -580,8 +599,3 @@ def main(cfg: DictConfig):
 
 if __name__ == "__main__":
     main()
-
-
-
-
-

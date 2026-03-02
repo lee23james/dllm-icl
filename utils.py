@@ -11,7 +11,13 @@ from open_mmicl.interface import LLaDAInterface
 from open_mmicl.interface import BaseInterface
 #这里开始计算分数,需要参考的主要是之前做的东西
 #这里是打分函数,我想用来进行分数的计算
-from lever_lm.load_ds_utils import load_hf_ds, load_gsm8k_ds, load_mmlu_ds, load_subj_ds
+from lever_lm.load_ds_utils import (
+    load_hf_ds,
+    load_gsm8k_ds,
+    load_mmlu_ds,
+    load_subj_ds,
+    load_trec_ds,
+)
 
 #cfg是任务配置,方便进行查询
 #
@@ -93,6 +99,41 @@ def load_ds(cfg,split=None):
         else:
             data_path = cfg.dataset.train_path
             ds = load_subj_ds(
+                data_path=data_path,
+                split="train",
+                label_mapping=label_mapping,
+            )
+    elif cfg.task.task_name == "trec":
+        # label 映射优先从 task，再从 dataset 取；都没有就用默认 6 类 TREC 映射
+        label_mapping = cfg.task.get("label_mapping") or cfg.dataset.get("label_mapping")
+        if label_mapping is None:
+            label_mapping = {
+                "0": "description",
+                "1": "entity",
+                "2": "expression",
+                "3": "human",
+                "4": "location",
+                "5": "number",
+            }
+        if split == "train":
+            data_path = cfg.dataset.train_path
+            ds = load_trec_ds(
+                data_path=data_path,
+                split="train",
+                label_mapping=label_mapping,
+            )
+        elif split in ("test", "validation"):
+            data_path = cfg.dataset.get("test_path") or cfg.dataset.get("val_path")
+            if data_path is None:
+                raise ValueError("test_path or val_path must be provided for test/validation split in trec")
+            ds = load_trec_ds(
+                data_path=data_path,
+                split="validation",
+                label_mapping=label_mapping,
+            )
+        else:
+            data_path = cfg.dataset.train_path
+            ds = load_trec_ds(
                 data_path=data_path,
                 split="train",
                 label_mapping=label_mapping,

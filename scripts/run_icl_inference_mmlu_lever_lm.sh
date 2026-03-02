@@ -30,10 +30,9 @@ EXTRA_ARGS=()
 [ -n "${INSERTION_CKPT_PATH}" ] && EXTRA_ARGS+=(insertion_selector.ckpt_path="${INSERTION_CKPT_PATH}")
 
 python icl_inference.py \
-  retriever.type=lever_lm \
-  insertion_selector.enabled=true \
-  retriever.nshot=3 \
-  test_subset_ids_path=generated_icd_data/cache/test_500.json \
+  retriever.type=rand \
+  insertion_selector.enabled=false \
+  retriever.nshot=2 \
   lever_lm.device="${LEVER_DEVICE}" \
   insertion_selector.device="${LEVER_DEVICE}" \
   max_samples="${MAX_SAMPLES}" \

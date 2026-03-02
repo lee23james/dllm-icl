@@ -158,6 +158,10 @@ class PromptTemplate:
                     # 替换模板中的<Q>和<A>
                     prompt = self.prompt_template.replace("<Q>", question).replace("<A>", answer)
                     return prompt
+        elif self.column_token_map and all(k in sample for k in self.column_token_map):
+            # 通用路径：subj 等任务使用 sentence/answer 等，只要 sample 含 column_token_map 所需键即可
+            prompt = self._replace_tokens(self.prompt_template, sample, use_mask=False)
+            return prompt
         else:
             raise ValueError(f"Unknown ICD format: {sample.keys()}")
     

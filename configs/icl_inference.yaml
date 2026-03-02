@@ -1,14 +1,14 @@
 # 阶段2：ICL推理配置
 defaults:
-  - task/mmlu
-  - dataset/mmlu
+  - task/subj
+  - dataset/subj
   - infer_model/llada
   - train: base_experiment  # 用于 LeverLM 模型结构（lever_lm, lever_lm_ds）
 
 # Retriever 配置
 retriever:
-  type: qwen_topk  # rand | lever_lm | qwen_topk
-  nshot: 3
+  type: rand  # rand | lever_lm | qwen_topk
+  nshot: 2
   seed: 42
 
 # Query 位置
@@ -46,10 +46,10 @@ lever_lm:
 
 # 这里暂定200
 output_dir: "./generated_icd_data/icl_inference_results"
-max_samples: 3  # 限制测试样本数（null=全部）
+max_samples: 1000  # 限制测试样本数（null=全部）
 
 # 可选：自定义测试子集（例如 generated_icd_data/cache/test_200.json）
-test_subset_ids_path: "generated_icd_data/cache/test_200.json"
+test_subset_ids_path: null
 
 # Debug helpers (disabled by default)
 debug:

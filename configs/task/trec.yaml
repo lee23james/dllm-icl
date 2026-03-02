@@ -1,0 +1,34 @@
+# TREC 问句类型分类（6 类）
+task_name: "trec"
+split_token: "\n\n"
+
+# label 数字 -> 含义文本
+label_mapping:
+  "0": "description"
+  "1": "entity"
+  "2": "expression"
+  "3": "human"
+  "4": "location"
+  "5": "number"
+
+# 复用 llada.yaml 里的 subj_prompt_template: "Input: <S>\nType: <A>"
+template: ${infer_model.prompt_templates.subj_prompt_template}
+
+column_token_map:
+  sentence: "<S>"   # 问句文本字段
+  answer: "<A>"     # 类型标签文本（description/entity/...）
+
+input_columns: ["sentence"]
+output_column: "answer"
+
+# 哪一列要被 mask 掉
+mask_column_token_map: "answer"
+
+# 生成参数：与 subj 相同，短一些即可
+gen_args:
+  gen_length: 2
+  steps: 2
+  block_length: 2
+  mask_length: 2
+  mc_num: 1
+

@@ -1,0 +1,17 @@
+name: "trec"
+
+# 训练集路径
+train_path: "data/trec/train.jsonl"
+
+# 验证 / 测试集路径（这里使用 dev_subsample，与原 config/trec.yaml 一致）
+test_path: "data/trec/dev_subsample.jsonl"
+
+# 可选：在 dataset 这一层也带上 label_mapping
+label_mapping:
+  "0": "description"
+  "1": "entity"
+  "2": "expression"
+  "3": "human"
+  "4": "location"
+  "5": "number"
+

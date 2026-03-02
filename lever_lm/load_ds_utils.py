@@ -338,3 +338,42 @@ def load_subj_ds(
 
     ds_split = ds_split.map(_add_answer, remove_columns=[])
     return ds_split
+
+
+def load_trec_ds(
+    data_path: str,
+    split: str = "train",
+    label_mapping: dict | None = None,
+):
+    """
+    加载 TREC 数据集（JSONL 格式）。
+
+    每行格式：{"sentence": "...", "label": "0"~"5"}。
+    通过 label_mapping 将 label 数字转为含义文本（如 description），
+    存到 answer 字段，供 prompt / 评测使用。
+    """
+    if label_mapping is None:
+        label_mapping = {
+            "0": "description",
+            "1": "entity",
+            "2": "expression",
+            "3": "human",
+            "4": "location",
+            "5": "number",
+        }
+    # 统一成 str -> str
+    label_mapping = {str(k): str(v) for k, v in label_mapping.items()}
+
+    data_files = {split: data_path}
+    ds = load_dataset("json", data_files=data_files)
+    ds_split = ds[split]
+
+    ds_split = ds_split.add_column("idx", list(range(len(ds_split))))
+    ds_split = ds_split.add_column("isquery", [0] * len(ds_split))
+
+    def _add_answer(example):
+        lab = str(example.get("label", ""))
+        return {"answer": label_mapping.get(lab, lab)}
+
+    ds_split = ds_split.map(_add_answer, remove_columns=[])
+    return ds_split

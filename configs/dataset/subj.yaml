@@ -1,4 +1,4 @@
 name: "subj"
 train_path: "data/subj/train.jsonl"
-test_path: "data/subj/dev_subsample.jsonl"  # 与 config/subj.yaml 一致
+test_path: "data/subj/test.jsonl"  # 与 config/subj.yaml 一致
 template: ${infer_model.prompt_templates.subj_prompt_template}

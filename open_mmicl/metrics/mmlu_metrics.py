@@ -26,23 +26,24 @@ class MMLUMetrics:
         3. 如果找不到，就返回空字符串，让上层逻辑用更宽松的包含判断
         """
         # 1) 明确带前缀的答案形式（Answer: A / answer is B / 选项 C 等）
-        # 常见英文形式
+        # 常见英文形式 —— 注意：从整段文本中取“最后一个匹配”，
+        # 以避免 few-shot 示例里的 Answer 干扰真正 query 的 Answer
         prefix_pattern = re.compile(
             r"(?:answer\s*(?:is|:)?\s*|\boption\s*[:\-]?\s*|\bchoice\s*[:\-]?\s*)"
             r"([ABCD])\b",
             flags=re.IGNORECASE,
         )
-        m = prefix_pattern.search(text)
-        if m:
-            return m.group(1).upper()
+        matches = list(prefix_pattern.finditer(text))
+        if matches:
+            return matches[-1].group(1).upper()
 
         # 2) 退而求其次：找独立的大写 A/B/C/D（带简单标点）
         #   例如：
         #   "A.", "(B)", "C )", " D "
         standalone_pattern = re.compile(r"\b([ABCD])\b")
-        m2 = standalone_pattern.search(text)
-        if m2:
-            return m2.group(1).upper()
+        m2_all = list(standalone_pattern.finditer(text))
+        if m2_all:
+            return m2_all[-1].group(1).upper()
 
         # 找不到就返回空串，交给上层作宽松包含判断
         return ""
@@ -134,4 +135,3 @@ class MMLUMetrics:
             "correct_count": correct_count,
             "total_count": total,
         }
-
