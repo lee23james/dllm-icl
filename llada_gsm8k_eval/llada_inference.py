@@ -20,12 +20,24 @@ import os
 plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans', 'Arial Unicode MS']
 plt.rcParams['axes.unicode_minus'] = False
 
-from simple_attention_visualizer import (
-    get_top_attention_tokens, 
-    decode_tokens, 
-    decode_full_sequence, 
-    create_visualization
-)
+# 可选导入：只在启用可视化功能时需要
+try:
+    from .simple_attention_visualizer import (
+        get_top_attention_tokens, 
+        decode_tokens, 
+        decode_full_sequence, 
+        create_visualization
+    )
+except ImportError:
+    # 如果模块不存在，定义占位函数（仅在 visualize_attentions=True 时才会调用）
+    def get_top_attention_tokens(*args, **kwargs):
+        raise ImportError("simple_attention_visualizer not available")
+    def decode_tokens(*args, **kwargs):
+        raise ImportError("simple_attention_visualizer not available")
+    def decode_full_sequence(*args, **kwargs):
+        raise ImportError("simple_attention_visualizer not available")
+    def create_visualization(*args, **kwargs):
+        raise ImportError("simple_attention_visualizer not available")
 
 def add_gumbel_noise(logits: torch.Tensor, temperature: float) -> torch.Tensor:
     """
