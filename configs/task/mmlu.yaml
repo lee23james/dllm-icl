@@ -15,6 +15,13 @@ input_columns: ["question", "choice_a", "choice_b", "choice_c", "choice_d"]
 output_column: "answer"
 mask_column_token_map: "answer"
 
+# 有限标签集合：用于 PPL 推理时枚举候选标签（A/B/C/D）
+label_mapping:
+  "0": "A"
+  "1": "B"
+  "2": "C"
+  "3": "D"
+
 gen_args:
   gen_length: 2
   steps: 2
