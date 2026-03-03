@@ -16,6 +16,30 @@ class MMLUMetrics:
     """
 
     @staticmethod
+    def _normalize_truth(ground_truth: str) -> str:
+        """
+        将 ground truth 归一化为 "A"/"B"/"C"/"D"。
+
+        兼容以下格式：
+        - "A"/"B"/"C"/"D"（大小写随意）
+        - 0/1/2/3 或 "0"/"1"/"2"/"3"（部分 parquet/HF 数据会用索引）
+        """
+        if ground_truth is None:
+            return ""
+        t = str(ground_truth).strip().upper()
+        if t in {"A", "B", "C", "D"}:
+            return t
+        idx2label = {"0": "A", "1": "B", "2": "C", "3": "D"}
+        if t in idx2label:
+            return idx2label[t]
+        # 有些数据可能是 "0.0" 之类，尝试转 int
+        try:
+            i = int(float(t))
+            return {0: "A", 1: "B", 2: "C", 3: "D"}.get(i, "")
+        except Exception:
+            return ""
+
+    @staticmethod
     def extract_choice(text: str) -> str:
         """
         从生成文本中提取模型预测的选项（A/B/C/D）
@@ -60,7 +84,7 @@ class MMLUMetrics:
         Returns:
             bool: 是否预测正确
         """
-        truth = (ground_truth or "").strip().upper()
+        truth = MMLUMetrics._normalize_truth(ground_truth)
         if truth not in {"A", "B", "C", "D"}:
             # 如果 ground_truth 不在 {A,B,C,D}，直接返回 False，避免误判
             return False
@@ -95,7 +119,7 @@ class MMLUMetrics:
             }
         """
         pred_choice = MMLUMetrics.extract_choice(generated_text)
-        truth = (ground_truth or "").strip().upper()
+        truth = MMLUMetrics._normalize_truth(ground_truth)
         correct = MMLUMetrics.is_correct(generated_text, truth)
 
         return {
