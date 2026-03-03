@@ -8,7 +8,6 @@ import accelerate
 from tqdm import tqdm
 import torch
 from pathlib import Path
-from dataset.sudoku.sudoku_handler import SudokuHandler
 import matplotlib.pyplot as plt
 import warnings
 import random
