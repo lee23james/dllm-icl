@@ -27,7 +27,7 @@ if project_root not in sys.path:
 from open_mmicl.retriever import RandRetriever, QwenTopkRetriever
 from open_mmicl.retriever.lever_lm_retriever import LeverLMRetriever
 from open_mmicl.interface import LLaDAInterface
-from open_mmicl.metrics import GSM8KMetrics, MMLUMetrics, SubjMetrics
+from open_mmicl.metrics import GSM8KMetrics, MMLUMetrics, SubjMetrics, TrecMetrics
 from open_mmicl.prompt_template import PromptTemplate
 from lever_lm.load_ds_utils import load_gsm8k_ds, load_mmlu_ds
 from lever_lm.models import InsertionSelector
@@ -394,9 +394,10 @@ def main(cfg: DictConfig):
         metrics = GSM8KMetrics()
     elif cfg.task.task_name == "mmlu":
         metrics = MMLUMetrics()
-    elif cfg.task.task_name in ("subj", "trec"):
-        # subj / trec 都是「标签文本是否出现在生成文本中」的分类任务
+    elif cfg.task.task_name == "subj":
         metrics = SubjMetrics()
+    elif cfg.task.task_name == "trec":
+        metrics = TrecMetrics()
     else:
         metrics = MMLUMetrics()  # 其他 task 暂用 MMLUMetrics
         logger.info(f"Using MMLUMetrics for task_name={cfg.task.task_name}")
