@@ -192,20 +192,32 @@ class PromptTemplate:
                     return prompt
                 else:
                     return qa_text
+            elif self.column_token_map and all(k in sample for k in self.column_token_map):
+                # 通用路径：如果提供了 column_token_map 且 sample 包含所有需要的字段（如 sentence/answer），使用通用替换方法
+                # 这支持 trec/subj 等任务，不要求必须有 question 字段
+                prompt = self._replace_tokens(self.prompt_template, sample, use_mask=True)
+                return prompt
             elif "question" in sample:
-                # 如果提供了column_token_map，使用通用替换方法
+                # 向后兼容：如果没有 column_token_map，但 sample 有 question 字段，尝试旧逻辑
                 if self.column_token_map:
-                    # 通用路径：根据 column_token_map 直接替换占位符（需要 mask 的列会被自动 mask）
-                    prompt = self._replace_tokens(self.prompt_template, sample, use_mask=True)
-                    return prompt
+                    # 有 column_token_map 但 sample 缺少某些字段，报错
+                    missing = [k for k in self.column_token_map if k not in sample]
+                    raise ValueError(
+                        f"Sample missing required columns for column_token_map: {missing} "
+                        f"(got sample keys: {list(sample.keys())}, column_token_map keys: {list(self.column_token_map.keys())})"
+                    )
                 else:
-                    # 不再支持任何额外格式，统一报错
+                    # 没有 column_token_map，也不支持
                     raise ValueError(
                         "column_token_map is required for masked query generation when using question format "
                         f"(got sample keys: {list(sample.keys())})"
                     )
             else:
-                raise ValueError(f"Unknown query format: {sample.keys()}")
+                raise ValueError(
+                    f"Unknown query format: {sample.keys()}. "
+                    f"Expected either 'q_a' field, or all columns from column_token_map {list(self.column_token_map.keys()) if self.column_token_map else 'None'}, "
+                    f"or 'question' field for backward compatibility."
+                )
         else:
             # 打分阶段：使用完整的answer（用于蒙特卡洛估计）
             if "q_a" in sample:

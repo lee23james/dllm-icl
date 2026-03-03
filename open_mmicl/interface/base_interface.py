@@ -63,16 +63,21 @@ class BaseInterface(ABC):
                 mask_token_str = "<|mdm_mask|>"
                 logger.warning(f"Failed to decode mask_id {self.mask_id}, using default: {mask_token_str}")
             
-            self.pt = PromptTemplate(
-                prompt_template=prompt_template,
-                mask_token_str=mask_token_str,
-                mask_length=mask_length,
-                column_token_map=column_token_map,
-                mask_column_token_map=mask_column_token_map,
-            )
+            try:
+                self.pt = PromptTemplate(
+                    prompt_template=prompt_template,
+                    mask_token_str=mask_token_str,
+                    mask_length=mask_length,
+                    column_token_map=column_token_map,
+                    mask_column_token_map=mask_column_token_map,
+                )
+                logger.debug(f"PromptTemplate initialized successfully for task={task}, template={prompt_template[:50]}...")
+            except Exception as e:
+                logger.error(f"Failed to initialize PromptTemplate: {e}, prompt_template={prompt_template}, column_token_map={column_token_map}, mask_column_token_map={mask_column_token_map}")
+                self.pt = None
         else:
             self.pt = None
-            logger.warning("prompt_template is None, PromptTemplate not initialized")
+            logger.warning(f"prompt_template is None for task={task}, PromptTemplate not initialized. This may cause errors for tasks that require PromptTemplate (e.g., trec, subj).")
     
     @abstractmethod
     def build_prompt(
