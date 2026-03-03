@@ -17,6 +17,7 @@ from lever_lm.load_ds_utils import (
     load_mmlu_ds,
     load_subj_ds,
     load_trec_ds,
+    load_sst2_ds,
 )
 
 #cfg是任务配置,方便进行查询
@@ -32,6 +33,38 @@ def load_ds(cfg,split=None):
     Returns:
         加载的数据集
     """
+    # region agent log
+    def _agent_log(message: str, data: dict, runId: str, hypothesisId: str, location: str):
+        # NDJSON debug log (sessionId not provided)
+        import json, time, uuid
+        payload = {
+            "id": f"log_{int(time.time()*1000)}_{uuid.uuid4().hex[:8]}",
+            "timestamp": int(time.time() * 1000),
+            "location": location,
+            "message": message,
+            "data": data,
+            "runId": runId,
+            "hypothesisId": hypothesisId,
+        }
+        try:
+            with open("/home/lzh/llada-icl/.cursor/debug.log", "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except Exception:
+            # never crash the program due to logging
+            pass
+
+    _agent_log(
+        message="enter load_ds",
+        data={
+            "task_name": getattr(getattr(cfg, "task", None), "task_name", None),
+            "split": split,
+        },
+        runId="pre-fix",
+        hypothesisId="H4",
+        location="utils.py:load_ds:entry",
+    )
+    # endregion agent log
+
     if cfg.task.task_name == "gsm8k":
         # 使用方式2：只加载单个split
         if split == "train":
@@ -138,6 +171,59 @@ def load_ds(cfg,split=None):
                 split="train",
                 label_mapping=label_mapping,
             )
+
+        # region agent log
+        _agent_log(
+            message="loaded trec ds",
+            data={"data_path": data_path, "split": split, "n": len(ds) if ds is not None else None},
+            runId="pre-fix",
+            hypothesisId="H2",
+            location="utils.py:load_ds:trec",
+        )
+        # endregion agent log
+    elif cfg.task.task_name == "sst2":
+        # SST-2 情感分类：与 subj/trec 一样，从 JSONL 加载并用 label_mapping 映射
+        label_mapping = cfg.task.get("label_mapping") or cfg.dataset.get("label_mapping")
+        if label_mapping is None:
+            label_mapping = {
+                "0": "negative",
+                "1": "positive",
+            }
+        if split == "train":
+            data_path = cfg.dataset.train_path
+            ds = load_sst2_ds(
+                data_path=data_path,
+                split="train",
+                label_mapping=label_mapping,
+            )
+        elif split in ("test", "validation"):
+            data_path = cfg.dataset.get("test_path") or cfg.dataset.get("val_path")
+            if data_path is None:
+                raise ValueError(
+                    "test_path or val_path must be provided for test/validation split in sst2"
+                )
+            ds = load_sst2_ds(
+                data_path=data_path,
+                split="validation",
+                label_mapping=label_mapping,
+            )
+        else:
+            data_path = cfg.dataset.train_path
+            ds = load_sst2_ds(
+                data_path=data_path,
+                split="train",
+                label_mapping=label_mapping,
+            )
+
+        # region agent log
+        _agent_log(
+            message="loaded sst2 ds",
+            data={"data_path": data_path, "split": split, "n": len(ds) if ds is not None else None},
+            runId="pre-fix",
+            hypothesisId="H2",
+            location="utils.py:load_ds:sst2",
+        )
+        # endregion agent log
     else:
         try:
             # 其他 HF 数据集：可选展开 choices 数组
@@ -145,6 +231,16 @@ def load_ds(cfg,split=None):
             ds = load_hf_ds(cfg.dataset.hf_ds, expand_choices=expand_choices)
         except Exception as e:
             raise ValueError(f"dataset load fail with error: {e}")
+
+    # region agent log
+    _agent_log(
+        message="exit load_ds",
+        data={"task_name": getattr(getattr(cfg, "task", None), "task_name", None), "split": split, "ds_is_none": ds is None},
+        runId="pre-fix",
+        hypothesisId="H4",
+        location="utils.py:load_ds:exit",
+    )
+    # endregion agent log
     return ds
 
 #需要模型和数据集分别进行计算,这里计算的是互信息

@@ -1,0 +1,11 @@
+name: "sst2"
+
+# 训练 / 验证 / 测试集路径（JSONL，与 data/sst2 下文件一致）
+train_path: "data/sst2/train.jsonl"
+test_path: "data/sst2/dev_subsample.jsonl"
+
+# 可选：在 dataset 这一层也带上 label_mapping（与 task.sst2 保持一致）
+label_mapping:
+  "0": "negative"
+  "1": "positive"
+

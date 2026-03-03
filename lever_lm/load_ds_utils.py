@@ -377,3 +377,38 @@ def load_trec_ds(
 
     ds_split = ds_split.map(_add_answer, remove_columns=[])
     return ds_split
+
+
+def load_sst2_ds(
+    data_path: str,
+    split: str = "train",
+    label_mapping: dict | None = None,
+):
+    """
+    加载 SST-2 情感分类数据集（JSONL 格式）。
+
+    每行格式：{"sentence": "...", "label": "0"|"1"}。
+    通过 label_mapping 将 label 数字转为含义文本（如 negative/positive），
+    存到 answer 字段，供 prompt / PPL 评测使用。
+    """
+    if label_mapping is None:
+        label_mapping = {
+            "0": "negative",
+            "1": "positive",
+        }
+    # 统一成 str -> str
+    label_mapping = {str(k): str(v) for k, v in label_mapping.items()}
+
+    data_files = {split: data_path}
+    ds = load_dataset("json", data_files=data_files)
+    ds_split = ds[split]
+
+    ds_split = ds_split.add_column("idx", list(range(len(ds_split))))
+    ds_split = ds_split.add_column("isquery", [0] * len(ds_split))
+
+    def _add_answer(example):
+        lab = str(example.get("label", ""))
+        return {"answer": label_mapping.get(lab, lab)}
+
+    ds_split = ds_split.map(_add_answer, remove_columns=[])
+    return ds_split
