@@ -91,13 +91,32 @@ def main(cfg: DictConfig):
 
     # 2. 读取 prompt 配置（供 retriever 和 interface 复用）
     prompt_template = cfg.task.get("template", None)
+    logger.debug(f"Initial prompt_template from config: {prompt_template}")
+    
+    # 检查 prompt_template 是否被 Hydra 正确解析（如果以 ${ 开头，说明未解析）
+    if prompt_template is not None and isinstance(prompt_template, str) and prompt_template.startswith("${"):
+        logger.warning(f"prompt_template appears to be unresolved: {prompt_template}, trying to resolve...")
+        # 尝试手动解析：从 infer_model.prompt_templates 中获取
+        try:
+            template_key = prompt_template.replace("${infer_model.prompt_templates.", "").replace("}", "")
+            prompt_template = cfg.infer_model.prompt_templates.get(template_key, None)
+            if prompt_template is None:
+                logger.error(f"Failed to resolve prompt_template key: {template_key}")
+            else:
+                logger.info(f"Successfully resolved prompt_template to: {prompt_template[:100]}...")
+        except Exception as e:
+            logger.error(f"Failed to resolve prompt_template: {e}")
+            prompt_template = None
+    
     column_token_map = cfg.task.get("column_token_map", None)
     if column_token_map is not None:
         column_token_map = dict(column_token_map)
+        logger.debug(f"column_token_map: {column_token_map}")
 
     mask_column_token_map = cfg.task.get("mask_column_token_map", None)
     if mask_column_token_map is not None and isinstance(mask_column_token_map, dict):
         mask_column_token_map = dict(mask_column_token_map)
+    logger.debug(f"mask_column_token_map: {mask_column_token_map}")
 
     # 2. 读取生成相关配置：这里只支持通过 task.gen_args 配置，缺少就直接报错
     task_gen_args = cfg.task.get("gen_args", None)
@@ -117,6 +136,19 @@ def main(cfg: DictConfig):
     cfg_scale = float(gen_cfg.get("cfg_scale", 0.0))
     remask_strategy = gen_cfg.get("remasking", "low_confidence")
 
+    # 检查 prompt_template 是否被 Hydra 正确解析（如果以 ${ 开头，说明未解析）
+    if prompt_template is not None and isinstance(prompt_template, str) and prompt_template.startswith("${"):
+        logger.warning(f"prompt_template appears to be unresolved: {prompt_template}, trying to resolve...")
+        # 尝试手动解析：从 infer_model.prompt_templates 中获取
+        try:
+            template_key = prompt_template.replace("${infer_model.prompt_templates.", "").replace("}", "")
+            prompt_template = cfg.infer_model.prompt_templates.get(template_key, None)
+            if prompt_template is None:
+                logger.error(f"Failed to resolve prompt_template key: {template_key}")
+        except Exception as e:
+            logger.error(f"Failed to resolve prompt_template: {e}")
+            prompt_template = None
+    
     prompt_template_obj = None
     if prompt_template is not None:
         prompt_template_obj = PromptTemplate(
@@ -125,6 +157,9 @@ def main(cfg: DictConfig):
             column_token_map=column_token_map,
             mask_column_token_map=mask_column_token_map,
         )
+        logger.debug(f"PromptTemplate initialized with template: {prompt_template[:100]}...")
+    else:
+        logger.warning("prompt_template is None after resolution, PromptTemplate will not be initialized")
     
     # 3. 初始化模型和tokenizer
     logger.info("Initializing model and tokenizer...")
