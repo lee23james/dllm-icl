@@ -35,7 +35,7 @@ from open_mmicl.retriever import RandRetriever, QwenTopkRetriever
 from open_mmicl.retriever.lever_lm_retriever import LeverLMRetriever
 from open_mmicl.interface import LLaDAInterface
 from open_mmicl.prompt_template import PromptTemplate
-from open_mmicl.metrics import SubjMetrics, TrecMetrics
+from open_mmicl.metrics import SubjMetrics, TrecMetrics, MMLUMetrics
 from lever_lm.load_ds_utils import load_gsm8k_ds, load_mmlu_ds
 from lever_lm.models import InsertionSelector
 from lever_lm.utils import encode_text_qwen
@@ -545,19 +545,31 @@ def main(cfg: DictConfig):
                 continue
             predicted_label = max(label_scores.items(), key=lambda x: x[1])[0]
 
-            ground_truth = str(test_sample.get("answer", ""))
+            raw_ground_truth = str(test_sample.get("answer", ""))
 
             # 根据任务选择 metrics 逻辑（只用来统一输出结构）
             if cfg.task.task_name == "trec":
-                eval_result = TrecMetrics.evaluate_single(predicted_label, ground_truth)
+                eval_result = TrecMetrics.evaluate_single(predicted_label, raw_ground_truth)
             elif cfg.task.task_name == "subj":
-                eval_result = SubjMetrics.evaluate_single(predicted_label, ground_truth)
-            else:
-                # 默认 exact-match
-                is_correct = (predicted_label.strip().lower() == ground_truth.strip().lower())
+                eval_result = SubjMetrics.evaluate_single(predicted_label, raw_ground_truth)
+            elif cfg.task.task_name == "mmlu":
+                # MMLU: ground truth 可能是 0/1/2/3 或 A/B/C/D，统一归一化后与 label 比较
+                truth = MMLUMetrics._normalize_truth(raw_ground_truth)
+                is_correct = (predicted_label.strip().upper() == truth)
                 eval_result = {
                     "predicted": predicted_label,
-                    "ground_truth": ground_truth,
+                    "ground_truth": truth,
+                    "is_correct": is_correct,
+                    "generated_text": predicted_label,
+                }
+            else:
+                # 默认 exact-match（大小写不敏感）
+                is_correct = (
+                    predicted_label.strip().lower() == raw_ground_truth.strip().lower()
+                )
+                eval_result = {
+                    "predicted": predicted_label,
+                    "ground_truth": raw_ground_truth,
                     "is_correct": is_correct,
                     "generated_text": predicted_label,
                 }
@@ -569,7 +581,7 @@ def main(cfg: DictConfig):
                 "query_position": query_position,
                 "label_scores": label_scores,
                 "predicted": predicted_label,
-                "ground_truth": ground_truth,
+                "ground_truth": eval_result["ground_truth"],
                 "is_correct": eval_result["is_correct"],
                 "left_prompt": left_text,
             }
