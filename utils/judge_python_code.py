@@ -34,7 +34,7 @@ def run_python_file(file_path):
 #专门针对nshot所有位置和autoicl进行测评
 #对文件进行评测
 #对于之前的eval.py运行文件进行扫描并且评测导入相对应的文件夹中(所以在sh脚本中这个是第二行,eval.py是第一行进行运行)
-def evaluate_python_files(folder_path, nshot, steps, gen_length, dev_samples_num=None,find_not_position=False, find_best_position=False,iswrite=True, return_json=False, output_path=None):
+def evaluate_python_files(folder_path, nshot, steps, gen_length, dev_samples_num=None,find_not_position=False, find_best_position=False, find_random_position=False, iswrite=True, return_json=False, output_path=None):
     """
     评估 Python 文件并返回结果
     
@@ -44,6 +44,8 @@ def evaluate_python_files(folder_path, nshot, steps, gen_length, dev_samples_num
         steps: 步数
         gen_length: 生成长度
         find_not_position: 是否只查找 position_auto-icl 文件夹
+        find_best_position: 是否只查找 best_position 文件夹
+        find_random_position: 是否只查找 position_random 文件夹
         iswrite: 是否写入文件（默认 True）
         return_json: 是否返回 JSON 格式（默认 False）
         output_path: 输出路径（可选）
@@ -73,6 +75,9 @@ def evaluate_python_files(folder_path, nshot, steps, gen_length, dev_samples_num
     if find_best_position:
         #找不到 best_position
         positions_to_check = [f'best_position_{dev_samples_num}']
+    elif find_random_position:
+        # 如果指定了 find_random_position，只查找 position_random 文件夹
+        positions_to_check = ['random']
     # 根据 find_not_position 参数决定查找哪些 position
     elif find_not_position:
         # 如果指定了 find_not_position，只查找 position_auto-icl 文件夹

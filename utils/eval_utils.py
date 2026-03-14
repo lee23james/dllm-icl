@@ -142,7 +142,10 @@ def eval_sudoku(results,dataset,result_path,args,position,iswrite=True):
         
         # 构建多级目录：shot_step_gen / position
         shot_part = f"shot_{nshot}_step_{steps}_gen_{gen_length}"
-        position_part = f"position_{position}"
+        if position == 'random':
+            position_part = "position_random"
+        else:
+            position_part = f"position_{position}"
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
         output_dir = base_dir / shot_part / position_part
@@ -153,7 +156,10 @@ def eval_sudoku(results,dataset,result_path,args,position,iswrite=True):
         
         with open(txt_output_path, 'w', encoding='utf-8') as f:
             f.write("=== Execution Results Summary ===\n")
-            f.write(f"Position: {position}\n")
+            if position == 'random':
+                f.write(f"Position: random (each sample randomly selected)\n")
+            else:
+                f.write(f"Position: {position}\n")
             f.write(f"nshot: {nshot}\n")
             f.write(f"steps: {steps}\n")
             f.write(f"gen_length: {gen_length}\n")
@@ -274,7 +280,10 @@ def eval_countdown(results, dataset, result_path, args, position, iswrite=True):
         
         # 构建多级目录：shot_step_gen / position
         shot_part = f"shot_{nshot}_step_{steps}_gen_{gen_length}"
-        position_part = f"position_{position}"
+        if position == 'random':
+            position_part = "position_random"
+        else:
+            position_part = f"position_{position}"
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
         output_dir = base_dir / shot_part / position_part
@@ -285,7 +294,10 @@ def eval_countdown(results, dataset, result_path, args, position, iswrite=True):
         
         with open(txt_output_path, 'w', encoding='utf-8') as f:
             f.write("=== Execution Results Summary ===\n")
-            f.write(f"Position: {position}\n")
+            if position == 'random':
+                f.write(f"Position: random (each sample randomly selected)\n")
+            else:
+                f.write(f"Position: {position}\n")
             f.write(f"nshot: {nshot}\n")
             f.write(f"steps: {steps}\n")
             f.write(f"gen_length: {gen_length}\n")
@@ -439,7 +451,10 @@ def eval_math500(results,dataset,result_path,args,position,iswrite=True):
         
         # 构建多级目录：shot_step_gen / position
         shot_part = f"shot_{nshot}_step_{steps}_gen_{gen_length}"
-        position_part = f"position_{position}"
+        if position == 'random':
+            position_part = "position_random"
+        else:
+            position_part = f"position_{position}"
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
         output_dir = base_dir / shot_part / position_part
@@ -450,7 +465,10 @@ def eval_math500(results,dataset,result_path,args,position,iswrite=True):
         
         with open(txt_output_path, 'w', encoding='utf-8') as f:
             f.write("=== Execution Results Summary ===\n")
-            f.write(f"Position: {position}\n")
+            if position == 'random':
+                f.write(f"Position: random (each sample randomly selected)\n")
+            else:
+                f.write(f"Position: {position}\n")
             f.write(f"nshot: {nshot}\n")
             f.write(f"steps: {steps}\n")
             f.write(f"gen_length: {gen_length}\n")
@@ -619,7 +637,10 @@ def eval_mbpp(results, dataset, result_dir, args,position):
         query_position = "auto-icl"
     # 构建多级目录：shot_step_gen / position / timestamp
     shot_part = f"shot_{nshot}_step_{steps}_gen_{gen_length}"
-    position_part = f"position_{query_position}"
+    if query_position == 'random':
+        position_part = "position_random"
+    else:
+        position_part = f"position_{query_position}"
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     output_dir = base_dir / shot_part / position_part / timestamp
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -775,7 +796,10 @@ def eval_gsm8k(results,dataset,result_path,args,position,iswrite=True):
         
         # 构建多级目录：shot_step_gen / position
         shot_part = f"shot_{nshot}_step_{steps}_gen_{gen_length}"
-        position_part = f"position_{position}"
+        if position == 'random':
+            position_part = "position_random"
+        else:
+            position_part = f"position_{position}"
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
         output_dir = base_dir / shot_part / position_part
@@ -786,7 +810,10 @@ def eval_gsm8k(results,dataset,result_path,args,position,iswrite=True):
         
         with open(txt_output_path, 'w', encoding='utf-8') as f:
             f.write("=== Execution Results Summary ===\n")
-            f.write(f"Position: {position}\n")
+            if position == 'random':
+                f.write(f"Position: random (each sample randomly selected)\n")
+            else:
+                f.write(f"Position: {position}\n")
             f.write(f"nshot: {nshot}\n")
             f.write(f"steps: {steps}\n")
             f.write(f"gen_length: {gen_length}\n")
