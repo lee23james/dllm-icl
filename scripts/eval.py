@@ -1,5 +1,5 @@
 import random, os, sys
-from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModel
+from transformers import AutoConfig, AutoTokenizer, AutoModelForCausalLM, AutoModel
 import torch
 import argparse
 from tqdm import tqdm
@@ -182,6 +182,47 @@ def main(args):
     print('------------------Load model------------------')
 
     tokenizer = AutoTokenizer.from_pretrained(model_name,trust_remote_code=True,local_files_only=True)
+
+    def _load_model_any(model_name: str):
+        """
+        Load either an AutoModelForCausalLM or AutoModel depending on the model's config.
+        This is more robust than string-matching on model_name (e.g. supports Dream, LLaDA, etc.).
+        """
+        cfg = AutoConfig.from_pretrained(model_name, trust_remote_code=True, local_files_only=True)
+        auto_map = getattr(cfg, "auto_map", None) or {}
+
+        # Prefer explicit auto_map if present
+        if isinstance(auto_map, dict):
+            if "AutoModelForCausalLM" in auto_map:
+                return AutoModelForCausalLM.from_pretrained(
+                    model_name,
+                    trust_remote_code=True,
+                    torch_dtype=torch.bfloat16,
+                    local_files_only=True,
+                )
+            if "AutoModel" in auto_map:
+                return AutoModel.from_pretrained(
+                    model_name,
+                    trust_remote_code=True,
+                    torch_dtype=torch.bfloat16,
+                    local_files_only=True,
+                )
+
+        # Fallback: try causal LM first, then plain AutoModel
+        try:
+            return AutoModelForCausalLM.from_pretrained(
+                model_name,
+                trust_remote_code=True,
+                torch_dtype=torch.bfloat16,
+                local_files_only=True,
+            )
+        except Exception:
+            return AutoModel.from_pretrained(
+                model_name,
+                trust_remote_code=True,
+                torch_dtype=torch.bfloat16,
+                local_files_only=True,
+            )
     
     # 如果使用 Accelerate，手动管理设备分配，避免 DDP 包装（推理任务不需要 DDP）
     if accelerator is not None:
@@ -191,29 +232,13 @@ def main(args):
         
         # 加载模型到 CPU，然后手动移动到对应 GPU
         # 这样可以避免 DDP 包装，减少内存占用
-        if 'LLaDA' in model_name:
-            model = AutoModel.from_pretrained(
-                model_name,
-                trust_remote_code=True,
-                torch_dtype=torch.bfloat16,
-                local_files_only=True
-            )
-        else:
-            model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                trust_remote_code=True,
-                torch_dtype=torch.bfloat16,
-                local_files_only=True
-            )
+        model = _load_model_any(model_name)
         # 手动移动到对应设备，不使用 prepare（避免 DDP 包装）
         model = model.to(device)
         print(f"[Rank {accelerator.process_index}] Model loaded on {device}")
     else:
         # 不使用 Accelerate 时，直接加载到指定设备
-        if 'LLaDA' in model_name:
-            model = AutoModel.from_pretrained(model_name,trust_remote_code=True,torch_dtype=torch.bfloat16,local_files_only=True).to(device)
-        else:
-            model=AutoModelForCausalLM.from_pretrained(model_name,trust_remote_code=True,torch_dtype=torch.bfloat16,local_files_only=True).to(device)
+        model = _load_model_any(model_name).to(device)
     
     #进入评测环节
     model.eval()
@@ -387,8 +412,17 @@ def main(args):
                     #根据每一个位置构造对应的文件
                     eval_mbpp(results,full_dataset,result_path,args,position='random')
         else:
-            # 原有逻辑：遍历所有位置
-            for query_position in range(nshot+1):
+            # 遍历所有位置；如果传了 --query_position 则只跑指定位置
+            if args.query_position is not None:
+                if nshot is None:
+                    raise ValueError("--nshot must be provided when using --query_position")
+                if not (0 <= args.query_position <= nshot):
+                    raise ValueError(f"--query_position must be in [0, nshot], got {args.query_position} (nshot={nshot})")
+                position_list = [args.query_position]
+            else:
+                position_list = list(range(nshot + 1))
+
+            for query_position in position_list:
                 results=[]
                 correct_letters=[]
                 
@@ -518,7 +552,8 @@ if __name__=='__main__':
     parser.add_argument('--mode',type=str,default='original')
     parser.add_argument('--data_path',type=str,default='./data/sudoku.csv')
     parser.add_argument('--result_path',type=str,default='../results/sudoku_results')
-    # parser.add_argument('--query_position',type=int,default=0)
+    parser.add_argument('--query_position',type=int,default=None,
+                        help='If set, only evaluate this single position (0..nshot). Default: evaluate all positions.')
     parser.add_argument('--max_samples',type=int,default=None)
     parser.add_argument('--nshot',type=int,default=None)
     parser.add_argument('--seed',type=int,default=1234)

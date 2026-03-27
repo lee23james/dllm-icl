@@ -27,9 +27,3 @@ prompt_templates:
   mmlu_prompt_template: "<Q>\nA. <a>\nB. <b>\nC. <c>\nD. <d>\nAnswer: <A>"  # MMLU多选题模板
   race_prompt_template: "<Q>\nA. <a>\nB. <b>\nC. <c>\nD. <d>\nAnswer: <A>"
   subj_prompt_template: "Input: <S>\nType: <A>"  # Subj: sentence -> <S>, answer(subjective/objective) -> <A>  # RACE多选题模板
-
-
-
-
-
-

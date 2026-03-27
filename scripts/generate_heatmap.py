@@ -13,10 +13,25 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 from utils.eval_utils import query_extract, load_dataset
 
-def generate(model,tokenizer,input,task,steps,gen_length,block_length,temperature,mode,situation,query_position,mask_id=126336):
+def generate(
+    model,
+    tokenizer,
+    input,
+    task,
+    steps,
+    gen_length,
+    block_length,
+    temperature,
+    mode,
+    situation,
+    query_position,
+    nshot=None,
+    mask_id=126336,
+):
     #不想做gpqa的解码顺序表示,因为这个数据集并没有表现很好
     if task!='gpqa':
-        query=query_extract(input,task,query_position,gen_length)
+        # 对于 gsm8k / countdown / sudoku 等任务，需要将 nshot 传入以构造对应 few-shot prompt
+        query = query_extract(input, task, query_position, gen_length, nshot)
         if situation=='base':
             user_input=query
         
@@ -128,8 +143,21 @@ def main(args):
                     situation='instruct'
                 else:
                     situation='base'
-                #list[tensor],每一个都是每步结果
-                results=generate(model,tokenizer,input,task,steps,gen_length,block_length,temperature,mode,situation,position)
+                # list[tensor]，每一个都是每步结果；对于 gsm8k 等任务需要传入 nshot
+                results = generate(
+                    model=model,
+                    tokenizer=tokenizer,
+                    input=input,
+                    task=task,
+                    steps=steps,
+                    gen_length=gen_length,
+                    block_length=block_length,
+                    temperature=temperature,
+                    mode=mode,
+                    situation=situation,
+                    query_position=position,
+                    nshot=nshot,
+                )
                 #这个是解码策略
                 if mode =='original':
                     #保存然后绘图

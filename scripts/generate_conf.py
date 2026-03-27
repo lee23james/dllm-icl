@@ -320,7 +320,7 @@ def main(args):
                 #当前这个问题的回答,已经计算好了,之后要存到参数里面
                 #先计算当前平均值(先计算一个样本的情况,包括各种步数和累计计算的值)
                 if task=='sudoku':
-                    result=cal_accmulate_conf(conf,answer_token_positions,token_change=token_change)
+                    result=cal_accmulate_conf(conf,answer_token_positions,token_change=token_change,current_conf=current_conf)
                 elif task=='countdown':
                     result=cal_accmulate_conf_countdown(conf,answer_token_positions,token_change=token_change,current_conf=current_conf)
                 elif task=='gsm8k':

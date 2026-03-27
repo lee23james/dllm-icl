@@ -43,6 +43,7 @@ def cal_accmulate_conf(
     conf_diff:List[np.ndarray]=None,
     entropy:List[np.ndarray]=None,
     token_change:List[np.ndarray]=None,
+    current_conf:np.ndarray=None,
 ):
     """
     计算conf、conf_diff、entropy在三种范围的平均值
@@ -96,16 +97,50 @@ def cal_accmulate_conf(
     token_change_positive_total = cal_token_change_positive_total(token_change)
 
     # 对每个变量进行计算
-    variables = {
-        'conf': conf,
-        # 'conf_diff': conf_diff,
-        # 'entropy': entropy,
-        'token_change': token_change    #需要依次进行计算的量
-
-    }
+    if current_conf is not None:
+        variables = {
+            'conf': conf,
+            # 'conf_diff': conf_diff,
+            # 'entropy': entropy,
+            'token_change': token_change,   #需要依次进行计算的量
+            'current_conf': current_conf,   #每个 token “被解码那一步”的置信度
+        }
+    else:
+        variables = {
+            'conf': conf,
+            # 'conf_diff': conf_diff,
+            # 'entropy': entropy,
+            'token_change': token_change,   #需要依次进行计算的量
+        }
     #要计算的量
     for var_name, var_list in variables.items():
         result[var_name] = {}
+
+        # 特殊处理 current_conf：它是一个单独的 numpy 数组，不是列表
+        if var_name == 'current_conf':
+            if current_conf is not None:
+                if isinstance(current_conf, torch.Tensor):
+                    current_conf = current_conf.detach().cpu().numpy()
+                if current_conf.ndim > 1:
+                    current_conf = current_conf.flatten()
+                assert current_conf.ndim == 1, f"current_conf的维度应该是1,当前维度是{current_conf.ndim}"
+
+                for range_name, positions in ranges.items():
+                    values = current_conf[positions]
+                    valid_mask = (values != -np.inf) & np.isfinite(values)
+                    valid_values = values[valid_mask]
+                    if len(valid_values) > 0:
+                        value_sum = float(np.sum(valid_values))
+                        total_valid_count = int(len(valid_values))
+                    else:
+                        value_sum = 0.0
+                        total_valid_count = 0
+                    result[var_name][range_name] = {
+                        'value_sum': value_sum,
+                        'total_valid_count': total_valid_count,
+                    }
+            continue
+
         #要计算的范围
         for range_name, positions in ranges.items():
             # 存储每一步的平均值和有效值数量
@@ -509,22 +544,23 @@ def cal_accmulate_conf_countdown(
     #计算token_change所有值为1的数量
     token_change_positive_total = cal_token_change_positive_total(token_change)
 
-    #对每个变量进行计算
+    # 对每个变量进行计算
     if current_conf is not None:
-    variables={
-        'conf': conf,
-            # 'conf_diff': conf_diff,
-            # 'entropy': entropy,
-            'token_change': token_change,
-            'current_conf':current_conf,#当前的conf,我想看的是是不是有相关的指标可以进行记录(就是呈现正比),这个应该适合conf_diff是相关的(但是conf_diff作为解码策略他们已经用了,感觉累加的是比较适合说理的)
-        }
-    else:
-        variables={
+        variables = {
             'conf': conf,
             # 'conf_diff': conf_diff,
             # 'entropy': entropy,
-        'token_change': token_change,
-    }
+            'token_change': token_change,
+            # 当前的conf, 用于额外分析当前位置一步的置信度
+            'current_conf': current_conf,
+        }
+    else:
+        variables = {
+            'conf': conf,
+            # 'conf_diff': conf_diff,
+            # 'entropy': entropy,
+            'token_change': token_change,
+        }
     #要计算的量
     for var_name, var_list in variables.items():
         result[var_name]={}
@@ -682,22 +718,23 @@ def cal_accmulate_conf_gsm8k(
     #计算token_change所有值为1的数量
     token_change_positive_total = cal_token_change_positive_total(token_change)
 
-    #对每个变量进行计算
+    # 对每个变量进行计算
     if current_conf is not None:
-    variables={
-        'conf': conf,
-            # 'conf_diff': conf_diff,
-            # 'entropy': entropy,
-            'token_change': token_change,
-            'current_conf':current_conf,#当前的conf,我想看的是是不是有相关的指标可以进行记录(就是呈现正比),这个应该适合conf_diff是相关的(但是conf_diff作为解码策略他们已经用了,感觉累加的是比较适合说理的)
-        }
-    else:
-        variables={
+        variables = {
             'conf': conf,
             # 'conf_diff': conf_diff,
             # 'entropy': entropy,
-        'token_change': token_change,
-    }
+            'token_change': token_change,
+            # 当前的conf, 用于额外分析当前位置一步的置信度
+            'current_conf': current_conf,
+        }
+    else:
+        variables = {
+            'conf': conf,
+            # 'conf_diff': conf_diff,
+            # 'entropy': entropy,
+            'token_change': token_change,
+        }
     #要计算的量
     for var_name, var_list in variables.items():
         result[var_name]={}
@@ -852,19 +889,21 @@ def cal_accmulate_conf_math(
 
     result={}
 
-    #计算token_change所有值为1的数量
+    # 计算token_change所有值为1的数量
     token_change_positive_total = cal_token_change_positive_total(token_change)
+
+    # 对每个变量进行计算
     if current_conf is not None:
-    variables={
-        'conf': conf,
+        variables = {
+            'conf': conf,
             'token_change': token_change,
-            'current_conf':current_conf,#当前的conf,我想看的是是不是有相关的指标可以进行记录(就是呈现正比),这个应该适合conf_diff是相关的(但是conf_diff作为解码策略他们已经用了,感觉累加的是比较适合说理的)
+            'current_conf': current_conf,
         }
     else:
-        variables={
+        variables = {
             'conf': conf,
-        'token_change': token_change,
-    }
+            'token_change': token_change,
+        }
     #要计算的量
     for var_name, var_list in variables.items():
         result[var_name]={}

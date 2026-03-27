@@ -102,124 +102,177 @@ echo "--------------------------------paint heatmap for countdown---------------
 #     --data_path params/heatmap_params/countdown_3_single_150.json \
 #     --task countdown
 
-echo "--------------------------------paint heatmap for sudoku--------------------------------"
+# echo "--------------------------------paint heatmap for sudoku--------------------------------"
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_0_avg.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_1_avg.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_2_avg.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_3_avg.json \
+#     --task sudoku  
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_4_avg.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_5_avg.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_0_single_0.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_0_single_1.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_0_single_2.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_0_single_3.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_1_single_0.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_1_single_1.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_1_single_2.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_1_single_3.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_2_single_0.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_2_single_1.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_2_single_2.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_2_single_3.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_3_single_0.json \
+#     --task sudoku   
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_3_single_1.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_3_single_2.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_3_single_3.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_4_single_0.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_4_single_1.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_4_single_2.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_4_single_3.json \
+#     --task sudoku
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_5_single_0.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_5_single_1.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_5_single_2.json \
+#     --task sudoku
+
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/sudoku_5_single_3.json \
+#     --task sudoku
+
+echo "--------------------------------paint heatmap for gsm8k--------------------------------"
+# 1) 如需重新生成 GSM8K 的解码顺序参数，请取消下面这一段的注释
+# python scripts/generate_heatmap.py \
+#   --task gsm8k \
+#   --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
+#   --device cuda:0 \
+#   --gen_length 128 \
+#   --steps 128 \
+#   --block_length 128 \
+#   --temperature 0.0 \
+#   --data_path data/gsm8k.jsonl \
+#   --samples_num 50 \
+#   --nshot 4
+
+# 2) 基于已经生成好的 params/heatmap_params/gsm8k_*_avg.json 画平均解码顺序热力图
+python utils/paint_heatmap.py \
+    --data_path params/heatmap_params/gsm8k_0_avg.json \
+    --task gsm8k
 
 python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_0_avg.json \
-    --task sudoku
+    --data_path params/heatmap_params/gsm8k_1_avg.json \
+    --task gsm8k
 
 python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_1_avg.json \
-    --task sudoku
+    --data_path params/heatmap_params/gsm8k_2_avg.json \
+    --task gsm8k
 
 python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_2_avg.json \
-    --task sudoku
+    --data_path params/heatmap_params/gsm8k_3_avg.json \
+    --task gsm8k
 
 python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_3_avg.json \
-    --task sudoku  
+    --data_path params/heatmap_params/gsm8k_4_avg.json \
+    --task gsm8k
 
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_4_avg.json \
-    --task sudoku
 
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_5_avg.json \
-    --task sudoku
+# Single-sample decode-order heatmaps for gsm8k (examples; adjust indices as needed)
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/gsm8k_0_single_0.json \
+#     --task gsm8k
 
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_0_single_0.json \
-    --task sudoku
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/gsm8k_0_single_1.json \
+#     --task gsm8k
 
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_0_single_1.json \
-    --task sudoku
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/gsm8k_0_single_2.json \
+#     --task gsm8k
 
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_0_single_2.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_0_single_3.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_1_single_0.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_1_single_1.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_1_single_2.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_1_single_3.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_2_single_0.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_2_single_1.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_2_single_2.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_2_single_3.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_3_single_0.json \
-    --task sudoku   
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_3_single_1.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_3_single_2.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_3_single_3.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_4_single_0.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_4_single_1.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_4_single_2.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_4_single_3.json \
-    --task sudoku
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_5_single_0.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_5_single_1.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_5_single_2.json \
-    --task sudoku
-
-python utils/paint_heatmap.py \
-    --data_path params/heatmap_params/sudoku_5_single_3.json \
-    --task sudoku
+# python utils/paint_heatmap.py \
+#     --data_path params/heatmap_params/gsm8k_0_single_3.json \
+#     --task gsm8k
 

@@ -66,8 +66,8 @@
 
 python utils/paint_conf.py \
     --json_dir params/conf_params \
-    --task math500 \
+    --task sudoku \
     --paint_conf_acc \
-    --paint_tokenchange_acc \
-    --num 
-    --output_dir conf_results/conf_analysis/sudoku
+    --num_steps 128 \
+    --num_shots 3 4 6 8 \
+    --output_dir conf_results/conf_analysis/mbpp \

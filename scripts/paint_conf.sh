@@ -1,5 +1,61 @@
 #这里需要的是顺便添加准确率,来进行一次性的统计
 #方便后续画图
+
+SHOTS=(2 3)
+
+echo "--------------------------------32bits sudoku (with current_conf)--------------------------------"
+for NSHOT in "${SHOTS[@]}"; do
+python scripts/generate_conf.py \
+    --task sudoku \
+    --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
+    --device cuda:3 \
+    --gen_length 32 \
+    --steps 32 \
+    --block_length 32 \
+    --temperature 0.0 \
+    --data_path data/sudoku.csv \
+    --nshot "${NSHOT}" \
+    --paint_num 0 \
+    --samples_num 2 \
+    --result_path ./results/sudoku_results \
+    --return_current_conf
+done
+
+python utils/paint_conf.py \
+    --json_dir params/conf_params/sudoku \
+    --task sudoku \
+    --paint_currentconf_acc \
+    --num_steps 32 \
+    --num_gen_lengths 32 \
+    --num_shots "${SHOTS[@]}" \
+    --output_dir conf_results/conf_analysis/sudoku
+
+echo "--------------------------------32bits countdown (with current_conf)--------------------------------"
+for NSHOT in "${SHOTS[@]}"; do
+python scripts/generate_conf.py \
+    --task countdown \
+    --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
+    --device cuda:3 \
+    --gen_length 32 \
+    --steps 32 \
+    --block_length 32 \
+    --temperature 0.0 \
+    --data_path data/countdown.jsonl \
+    --nshot "${NSHOT}" \
+    --paint_num 0 \
+    --samples_num 2 \
+    --result_path ./results/countdown_results \
+    --return_current_conf
+done
+
+python utils/paint_conf.py \
+    --json_dir params/conf_params/countdown \
+    --task countdown \
+    --paint_currentconf_acc \
+    --num_steps 32 \
+    --num_gen_lengths 32 \
+    --num_shots "${SHOTS[@]}" \
+    --output_dir conf_results/conf_analysis/countdown
 # echo "--------------------------------32bits sudoku--------------------------------"
 # python scripts/generate_conf.py \
 #     --task sudoku \
@@ -403,7 +459,7 @@
 # #     # --ispaint \
 
 
-echo "--------------------------------256 bits gsm8k--------------------------------"
+# echo "--------------------------------256 bits gsm8k--------------------------------"
 
 # python scripts/generate_conf.py \
 #     --task gsm8k \
@@ -498,71 +554,71 @@ echo "--------------------------------256 bits gsm8k----------------------------
 #     --result_path ./results/gsm8k_results \
 #     # --ispaint \
 
-echo "--------------------------------math500--------------------------------"
+# echo "--------------------------------math500--------------------------------"
 
-python scripts/generate_conf.py \
-    --task math500 \
-    --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
-    --device cuda:0 \
-    --gen_length 256 \
-    --steps 256 \
-    --block_length 256 \
-    --temperature 0.0 \
-    --data_path data/math500.jsonl \
-    --nshot 3 \
-    --paint_num 10 \
-    --samples_num 500 \
-    --result_path ./results/math500_results \
-    --return_current_conf
-    # --ispaint \
+# python scripts/generate_conf.py \
+#     --task math500 \
+#     --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
+#     --device cuda:0 \
+#     --gen_length 256 \
+#     --steps 256 \
+#     --block_length 256 \
+#     --temperature 0.0 \
+#     --data_path data/math500.jsonl \
+#     --nshot 3 \
+#     --paint_num 10 \
+#     --samples_num 500 \
+#     --result_path ./results/math500_results \
+#     --return_current_conf
+#     # --ispaint \
 
-python scripts/generate_conf.py \
-    --task math500 \
-    --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
-    --device cuda:0 \
-    --gen_length 256 \
-    --steps 128 \
-    --block_length 256 \
-    --temperature 0.0 \
-    --data_path data/math500.jsonl \
-    --nshot 3 \
-    --paint_num 10 \
-    --samples_num 500 \
-    --result_path ./results/math500_results \
-    --return_current_conf
-    # --ispaint \
+# python scripts/generate_conf.py \
+#     --task math500 \
+#     --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
+#     --device cuda:0 \
+#     --gen_length 256 \
+#     --steps 128 \
+#     --block_length 256 \
+#     --temperature 0.0 \
+#     --data_path data/math500.jsonl \
+#     --nshot 3 \
+#     --paint_num 10 \
+#     --samples_num 500 \
+#     --result_path ./results/math500_results \
+#     --return_current_conf
+#     # --ispaint \
 
-python scripts/generate_conf.py \
-    --task math500 \
-    --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
-    --device cuda:0 \
-    --gen_length 256 \
-    --steps 128 \
-    --block_length 256 \
-    --temperature 0.0 \
-    --data_path data/math500.jsonl \
-    --nshot 4 \
-    --paint_num 10 \
-    --samples_num 500 \
-    --result_path ./results/math500_results \
-    --return_current_conf
-    # --ispaint \
+# python scripts/generate_conf.py \
+#     --task math500 \
+#     --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
+#     --device cuda:0 \
+#     --gen_length 256 \
+#     --steps 128 \
+#     --block_length 256 \
+#     --temperature 0.0 \
+#     --data_path data/math500.jsonl \
+#     --nshot 4 \
+#     --paint_num 10 \
+#     --samples_num 500 \
+#     --result_path ./results/math500_results \
+#     --return_current_conf
+#     # --ispaint \
 
-python scripts/generate_conf.py \
-    --task math500 \
-    --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
-    --device cuda:0 \
-    --gen_length 256 \
-    --steps 128 \
-    --block_length 256 \
-    --temperature 0.0 \
-    --data_path data/math500.jsonl \
-    --nshot 6 \
-    --paint_num 10 \
-    --samples_num 500 \
-    --result_path ./results/math500_results \
-    --return_current_conf
-    # --ispaint \
+# python scripts/generate_conf.py \
+#     --task math500 \
+#     --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
+#     --device cuda:0 \
+#     --gen_length 256 \
+#     --steps 128 \
+#     --block_length 256 \
+#     --temperature 0.0 \
+#     --data_path data/math500.jsonl \
+#     --nshot 6 \
+#     --paint_num 10 \
+#     --samples_num 500 \
+#     --result_path ./results/math500_results \
+#     --return_current_conf
+#     # --ispaint \
 
 # python scripts/generate_conf.py \
 #     --task math500 \
@@ -689,53 +745,53 @@ echo "--------------------------------eval mbpp--------------------------------"
 #     --steps 128 \
 #     --gen_length 128
 
-python scripts/generate_conf.py \
-    --task mbpp \
-    --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
-    --device cuda:0 \
-    --gen_length 128 \
-    --steps 128 \
-    --block_length 128 \
-    --temperature 0.0 \
-    --data_path data/mbpp.json \
-    --nshot 6 \
-    --paint_num 10 \
-    --samples_num 500 \
-    --result_path ./results/mbpp_results \
-    --return_current_conf
-    # --ispaint \
+# python scripts/generate_conf.py \
+#     --task mbpp \
+#     --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
+#     --device cuda:0 \
+#     --gen_length 128 \
+#     --steps 128 \
+#     --block_length 128 \
+#     --temperature 0.0 \
+#     --data_path data/mbpp.json \
+#     --nshot 6 \
+#     --paint_num 10 \
+#     --samples_num 500 \
+#     --result_path ./results/mbpp_results \
+#     --return_current_conf
+#     # --ispaint \
 
-python utils/judge_python_code.py \
-    --folder_path results/mbpp_results \
-    --output_path params/conf_params/mbpp/accuracy \
-    --return_json \
-    --nshot 6 \
-    --steps 128 \
-    --gen_length 128
+# python utils/judge_python_code.py \
+#     --folder_path results/mbpp_results \
+#     --output_path params/conf_params/mbpp/accuracy \
+#     --return_json \
+#     --nshot 6 \
+#     --steps 128 \
+#     --gen_length 128
 
-python scripts/generate_conf.py \
-    --task mbpp \
-    --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
-    --device cuda:0 \
-    --gen_length 128 \
-    --steps 128 \
-    --block_length 128 \
-    --temperature 0.0 \
-    --data_path data/mbpp.json \
-    --nshot 8 \
-    --paint_num 10 \
-    --samples_num 500 \
-    --result_path ./results/mbpp_results \
-    --return_current_conf
-    # --ispaint \
+# python scripts/generate_conf.py \
+#     --task mbpp \
+#     --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
+#     --device cuda:0 \
+#     --gen_length 128 \
+#     --steps 128 \
+#     --block_length 128 \
+#     --temperature 0.0 \
+#     --data_path data/mbpp.json \
+#     --nshot 8 \
+#     --paint_num 10 \
+#     --samples_num 500 \
+#     --result_path ./results/mbpp_results \
+#     --return_current_conf
+#     # --ispaint \
 
-python utils/judge_python_code.py \
-    --folder_path results/mbpp_results \
-    --output_path params/conf_params/mbpp/accuracy \
-    --return_json \
-    --nshot 8 \
-    --steps 128 \
-    --gen_length 128
+# python utils/judge_python_code.py \
+#     --folder_path results/mbpp_results \
+#     --output_path params/conf_params/mbpp/accuracy \
+#     --return_json \
+#     --nshot 8 \
+#     --steps 128 \
+#     --gen_length 128
 
 
 # python scripts/generate_conf.py \
