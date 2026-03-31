@@ -1,61 +1,5 @@
 #这里需要的是顺便添加准确率,来进行一次性的统计
 #方便后续画图
-
-SHOTS=(2 3)
-
-echo "--------------------------------32bits sudoku (with current_conf)--------------------------------"
-for NSHOT in "${SHOTS[@]}"; do
-python scripts/generate_conf.py \
-    --task sudoku \
-    --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
-    --device cuda:3 \
-    --gen_length 32 \
-    --steps 32 \
-    --block_length 32 \
-    --temperature 0.0 \
-    --data_path data/sudoku.csv \
-    --nshot "${NSHOT}" \
-    --paint_num 0 \
-    --samples_num 2 \
-    --result_path ./results/sudoku_results \
-    --return_current_conf
-done
-
-python utils/paint_conf.py \
-    --json_dir params/conf_params/sudoku \
-    --task sudoku \
-    --paint_currentconf_acc \
-    --num_steps 32 \
-    --num_gen_lengths 32 \
-    --num_shots "${SHOTS[@]}" \
-    --output_dir conf_results/conf_analysis/sudoku
-
-echo "--------------------------------32bits countdown (with current_conf)--------------------------------"
-for NSHOT in "${SHOTS[@]}"; do
-python scripts/generate_conf.py \
-    --task countdown \
-    --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
-    --device cuda:3 \
-    --gen_length 32 \
-    --steps 32 \
-    --block_length 32 \
-    --temperature 0.0 \
-    --data_path data/countdown.jsonl \
-    --nshot "${NSHOT}" \
-    --paint_num 0 \
-    --samples_num 2 \
-    --result_path ./results/countdown_results \
-    --return_current_conf
-done
-
-python utils/paint_conf.py \
-    --json_dir params/conf_params/countdown \
-    --task countdown \
-    --paint_currentconf_acc \
-    --num_steps 32 \
-    --num_gen_lengths 32 \
-    --num_shots "${SHOTS[@]}" \
-    --output_dir conf_results/conf_analysis/countdown
 # echo "--------------------------------32bits sudoku--------------------------------"
 # python scripts/generate_conf.py \
 #     --task sudoku \
@@ -841,3 +785,32 @@ echo "--------------------------------eval mbpp--------------------------------"
 #     --nshot 8 \
 #     --steps 128 \
 #     --gen_length 128
+
+SHOTS=(3 4 6 8)
+
+echo "--------------------------------32bits sudoku (with current_conf)--------------------------------"
+for NSHOT in "${SHOTS[@]}"; do
+python scripts/generate_conf.py \
+    --task sudoku \
+    --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
+    --device cuda:3 \
+    --gen_length 32 \
+    --steps 32 \
+    --block_length 32 \
+    --temperature 0.0 \
+    --data_path data/sudoku.csv \
+    --nshot "${NSHOT}" \
+    --paint_num 0 \
+    --samples_num 200 \
+    --result_path ./results/sudoku_results \
+    --return_current_conf
+done
+
+python utils/paint_conf.py \
+    --json_dir params/conf_params/sudoku \
+    --task sudoku \
+    --paint_currentconf_acc \
+    --num_steps 32 \
+    --num_gen_lengths 32 \
+    --num_shots "${SHOTS[@]}" \
+    --output_dir conf_results/conf_analysis/sudoku

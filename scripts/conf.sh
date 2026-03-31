@@ -65,9 +65,10 @@
 #     --output_dir conf_results/conf_analysis/sudoku\
 
 python utils/paint_conf.py \
-    --json_dir params/conf_params \
+    --json_dir params/conf_params/sudoku \
     --task sudoku \
-    --paint_conf_acc \
-    --num_steps 128 \
+    --paint_currentconf_acc \
+    --num_steps 32 \
+    --num_gen_lengths 32 \
     --num_shots 3 4 6 8 \
-    --output_dir conf_results/conf_analysis/mbpp \
+    --output_dir conf_results/conf_analysis/sudoku \

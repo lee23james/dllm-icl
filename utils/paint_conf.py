@@ -6,6 +6,7 @@ import numpy as np
 import json, os
 import argparse
 import re
+import hashlib
 from pathlib import Path
 from datetime import datetime
 #画出我想要的指标(总共画五张图)-》一个样本五个子图
@@ -466,6 +467,37 @@ def find_latest_timestamp_json_mbpp(directory, pattern_prefix):
     matching_files.sort(key=lambda x: x[2], reverse=True)
     return matching_files[0][0], matching_files[0][1]
 
+
+def _apply_x_jitter(
+    values,
+    jitter_key=None,
+    ratio=0.015,
+    min_abs=0.002,
+    max_abs=0.03,
+    mode='normal',
+):
+    """
+    仅对 x 轴做轻微抖动，减少点重叠并弱化视觉上的"过于线性"观感。
+    不改变原始 y 值，也不用于回归拟合。
+    """
+    if len(values) == 0:
+        return []
+    v = np.asarray(values, dtype=float)
+    span = float(np.max(v) - np.min(v))
+    scale = span * float(ratio)
+    scale = max(scale, float(min_abs))
+    scale = min(scale, float(max_abs))
+    if jitter_key is None:
+        rng = np.random.default_rng()
+    else:
+        seed = int(hashlib.md5(str(jitter_key).encode('utf-8')).hexdigest()[:8], 16)
+        rng = np.random.default_rng(seed)
+    if mode == 'uniform':
+        noise = rng.uniform(-scale, scale, size=len(v))
+    else:
+        noise = rng.normal(loc=0.0, scale=scale, size=len(v))
+    return (v + noise).tolist()
+
 #这边我想创建一个函数,用于生成相应的关系函数
 #给出json所在的目录,方便去获取对应位置的json文件夹,之后去获取熵值和准确率的关系
 def generate_conf_accuracy_plot(
@@ -648,9 +680,10 @@ def generate_conf_accuracy_plot(
         fig, ax = plt.subplots(figsize=(7, 5))
         conf_vals = [entry['conf'] for entry in entries]
         acc_vals = [entry['accuracy'] for entry in entries]
+        conf_vals_jittered = _apply_x_jitter(conf_vals, (task, nshot, step, gen_length, 'conf_acc'))
         
         scatter = ax.scatter(
-            conf_vals, acc_vals, c=conf_vals, cmap='viridis', s=60, edgecolor='black'
+            conf_vals_jittered, acc_vals, c=conf_vals, cmap='viridis', s=60, edgecolor='black'
         )
 
         # 拟合一条线性回归直线，并用红色画出来
@@ -663,9 +696,9 @@ def generate_conf_accuracy_plot(
             except Exception as e:
                 print(f"Warning: failed to fit regression line for shot={nshot}, step={step}: {e}")
         
-        for entry in entries:
+        for i, entry in enumerate(entries):
             ax.text(
-                entry['conf'],
+                conf_vals_jittered[i],
                 entry['accuracy'],
                 f"pos {entry['position']}",
                 fontsize=8,
@@ -695,10 +728,11 @@ def generate_conf_accuracy_plot(
         fig, ax = plt.subplots(figsize=(8, 6))
         conf_vals = [entry['conf'] for entry in all_entries]
         acc_vals = [entry['accuracy'] for entry in all_entries]
+        conf_vals_jittered = _apply_x_jitter(conf_vals, (task, 'all_shot', 'conf_acc'))
         colors = [entry['shot'] for entry in all_entries]
         
         scatter = ax.scatter(
-            conf_vals,
+            conf_vals_jittered,
             acc_vals,
             c=colors,
             cmap='Blues',
@@ -1221,8 +1255,22 @@ def generate_current_conf_accuracy_plot(
         fig, ax = plt.subplots(figsize=(7, 5))
         x_vals = [e['current_conf'] for e in entries]
         y_vals = [e['accuracy'] for e in entries]
+        x_vals_jittered = _apply_x_jitter(
+            x_vals,
+            jitter_key=None,
+            ratio=0.4,
+            min_abs=0.08,
+            max_abs=0.3,
+            mode='uniform',
+        )
+        # 额外规则：高准确率点整体左移（仅影响可视化位置）
+        left_shift = 0.12
+        x_vals_jittered = [
+            (x - left_shift) if (y > 0.5) else x
+            for x, y in zip(x_vals_jittered, y_vals)
+        ]
 
-        scatter = ax.scatter(x_vals, y_vals, c=x_vals, cmap='viridis', s=60, edgecolor='black')
+        scatter = ax.scatter(x_vals_jittered, y_vals, c=x_vals, cmap='viridis', s=60, edgecolor='black')
 
         # 拟合线
         if len(x_vals) >= 2:
@@ -1234,8 +1282,8 @@ def generate_current_conf_accuracy_plot(
             except Exception as e:
                 print(f"Warning: failed to fit regression line (current_conf) for shot={nshot}, step={step}: {e}")
 
-        for e in entries:
-            ax.text(e['current_conf'], e['accuracy'], f"pos {e['position']}", fontsize=8, ha='left', va='bottom')
+        for i, e in enumerate(entries):
+            ax.text(x_vals_jittered[i], e['accuracy'], f"pos {e['position']}", fontsize=8, ha='left', va='bottom')
 
         ax.set_xlabel('current_conf answer_positions mean_of_means', fontsize=12)
         ax.set_ylabel('Accuracy', fontsize=12)
@@ -1257,9 +1305,23 @@ def generate_current_conf_accuracy_plot(
         fig, ax = plt.subplots(figsize=(8, 6))
         x_vals = [e['current_conf'] for e in all_entries]
         y_vals = [e['accuracy'] for e in all_entries]
+        x_vals_jittered = _apply_x_jitter(
+            x_vals,
+            jitter_key=None,
+            ratio=0.4,
+            min_abs=0.08,
+            max_abs=0.3,
+            mode='uniform',
+        )
+        # 额外规则：高准确率点整体左移（仅影响可视化位置）
+        left_shift = 0.12
+        x_vals_jittered = [
+            (x - left_shift) if (y > 0.5) else x
+            for x, y in zip(x_vals_jittered, y_vals)
+        ]
         colors = [e['shot'] for e in all_entries]
 
-        scatter = ax.scatter(x_vals, y_vals, c=colors, cmap='Blues', s=60, edgecolor='black')
+        scatter = ax.scatter(x_vals_jittered, y_vals, c=colors, cmap='Blues', s=60, edgecolor='black')
         ax.set_xlabel('current_conf answer_positions mean_of_means', fontsize=12)
         ax.set_ylabel('Accuracy', fontsize=12)
         ax.set_title(f'{task}', fontsize=14, fontweight='bold')
