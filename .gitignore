@@ -85,3 +85,4 @@ model/
 # Final result dumps
 final_results.txt
 paper/
+*.zip
