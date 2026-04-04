@@ -70,3 +70,18 @@ Thumbs.db
 # Workspace I/O placeholders
 --input
 --output_dir
+# Model weights (too large)
+model/
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.h5
+
+# Backup files
+*.bak
+
+# Final result dumps
+final_results.txt
+paper/

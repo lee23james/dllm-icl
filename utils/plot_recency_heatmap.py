@@ -1,9 +1,10 @@
 import argparse
+import csv
 import json
 import math
 import os
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 
 import numpy as np
 
@@ -107,7 +108,7 @@ def build_recency_heatmap(
     max_steps: Optional[int],
     position_mode: str,
     params_dir: str,
-) -> np.ndarray:
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Returns heatmap of shape [n_layers, nshot]:
       rows: layer index (0..n_layers-1)
@@ -121,7 +122,6 @@ def build_recency_heatmap(
     for pos in range(nshot + 1):
         b = _normalize_boundary_index(nshot=nshot, query_position=pos, position_mode=position_mode)
         dist_order = _distance_order_for_position(nshot=nshot, query_position=b)  # list of example indices 1..nshot
-        # map distance rank -> field name
         dist_fields = [f"example{i}_token" for i in dist_order]
 
         for sample_idx in range(max_samples):
@@ -138,7 +138,6 @@ def build_recency_heatmap(
             if max_steps is not None:
                 la_steps = la_steps[: max_steps]
 
-            # aggregate over steps
             for step_layers in la_steps:
                 if not isinstance(step_layers, list) or len(step_layers) != n_layers:
                     continue
@@ -157,22 +156,27 @@ def build_recency_heatmap(
                             accum[layer_idx, d] += fv
                             count[layer_idx, d] += 1.0
 
-    # avoid divide by zero
     heat = np.divide(accum, np.maximum(count, 1.0))
-    return heat
+    return heat, count
 
 
 def save_heatmap_png(heat: np.ndarray, out_path: str, title: str):
     import matplotlib.pyplot as plt
-    import seaborn as sns
 
     plt.figure(figsize=(10.5, 6.0))
-    ax = sns.heatmap(
-        heat,
-        cmap="YlGnBu",
-        cbar=True,
-        square=False,
-    )
+    ax = plt.gca()
+    try:
+        import seaborn as sns
+
+        ax = sns.heatmap(
+            heat,
+            cmap="YlGnBu",
+            cbar=True,
+            square=False,
+        )
+    except ModuleNotFoundError:
+        im = ax.imshow(heat, cmap="YlGnBu", aspect="auto", interpolation="nearest")
+        plt.colorbar(im, ax=ax)
     ax.set_title(title)
     ax.set_xlabel("Example distance rank (0=nearest to query)")
     ax.set_ylabel("Layer")
@@ -189,7 +193,7 @@ def build_pos_vs_example_heatmap(
     max_steps: Optional[int],
     position_mode: str,
     params_dir: str,
-) -> np.ndarray:
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Returns heatmap of shape [(nshot+1), nshot]:
       rows: query insertion position pos (0..nshot) as used in filenames
@@ -207,13 +211,9 @@ def build_pos_vs_example_heatmap(
     accum = np.zeros((nshot + 1, nshot), dtype=np.float64)
     count = np.zeros((nshot + 1, nshot), dtype=np.float64)
 
-    # position_mode is kept for consistency with the CLI; for pos-vs-example we *do not* reorder
-    # columns by distance (we show raw Example 1..nshot). But we still allow optional sanity
-    # mapping in labels later if needed.
     _ = position_mode
 
     for pos in range(nshot + 1):
-        # normalize raw query_position index into boundary index b in [0..nshot]
         b = _normalize_boundary_index(
             nshot=nshot,
             query_position=pos,
@@ -253,7 +253,97 @@ def build_pos_vs_example_heatmap(
                             count[b, ex_i - 1] += 1.0
 
     heat = np.divide(accum, np.maximum(count, 1.0))
-    return heat
+    return heat, count
+
+
+def _default_table_prefix(out_path: str) -> Path:
+    out = Path(out_path)
+    return out.with_suffix("")
+
+
+def save_matrix_csv(
+    heat: np.ndarray,
+    out_path: str,
+    mode: str,
+    nshot: int,
+):
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        if mode == "pos_vs_example":
+            writer.writerow(["query_boundary"] + [f"example{i}" for i in range(1, nshot + 1)])
+            for boundary_idx in range(nshot + 1):
+                writer.writerow([boundary_idx] + [float(v) for v in heat[boundary_idx]])
+            return
+
+        writer.writerow(["layer"] + [f"distance_rank_{d}" for d in range(nshot)])
+        for layer_idx in range(heat.shape[0]):
+            writer.writerow([layer_idx] + [float(v) for v in heat[layer_idx]])
+
+
+def save_long_csv(
+    heat: np.ndarray,
+    count: np.ndarray,
+    out_path: str,
+    mode: str,
+    task: str,
+    position_mode: str,
+    nshot: int,
+):
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        if mode == "pos_vs_example":
+            writer.writerow(
+                [
+                    "task",
+                    "mode",
+                    "position_mode",
+                    "query_boundary",
+                    "example_index",
+                    "attention_flow",
+                    "count",
+                ]
+            )
+            for boundary_idx in range(nshot + 1):
+                for example_idx in range(1, nshot + 1):
+                    writer.writerow(
+                        [
+                            task,
+                            mode,
+                            position_mode,
+                            boundary_idx,
+                            example_idx,
+                            float(heat[boundary_idx, example_idx - 1]),
+                            int(count[boundary_idx, example_idx - 1]),
+                        ]
+                    )
+            return
+
+        writer.writerow(
+            [
+                "task",
+                "mode",
+                "position_mode",
+                "layer",
+                "distance_rank",
+                "attention_flow",
+                "count",
+            ]
+        )
+        for layer_idx in range(heat.shape[0]):
+            for distance_rank in range(nshot):
+                writer.writerow(
+                    [
+                        task,
+                        mode,
+                        position_mode,
+                        layer_idx,
+                        distance_rank,
+                        float(heat[layer_idx, distance_rank]),
+                        int(count[layer_idx, distance_rank]),
+                    ]
+                )
 
 
 def save_pos_vs_example_png(
@@ -263,26 +353,31 @@ def save_pos_vs_example_png(
     nshot: int,
 ):
     import matplotlib.pyplot as plt
-    import seaborn as sns
 
     plt.figure(figsize=(8.5, 5.8))
-    ax = sns.heatmap(
-        heat,
-        # Use reversed colormap so that yellow = highest, blue = lowest,
-        # matching the rollout heatmaps in paint_rollout.py
-        cmap="YlGnBu_r",
-        cbar=True,
-        square=False,
-        # Label examples with math notation: e_1, e_2, ...
-        xticklabels=[rf"$e_{i}$" for i in range(1, nshot + 1)],
-        # Boundary index with math notation: p=0, p=1, ...
-        yticklabels=[rf"$p={p}$" for p in range(0, nshot + 1)],
-    )
-    # Remove title
+    ax = plt.gca()
+    try:
+        import seaborn as sns
+
+        ax = sns.heatmap(
+            heat,
+            cmap="YlGnBu_r",
+            cbar=True,
+            square=False,
+            xticklabels=[rf"$e_{i}$" for i in range(1, nshot + 1)],
+            yticklabels=[rf"$p={p}$" for p in range(0, nshot + 1)],
+        )
+        cbar = ax.collections[0].colorbar
+    except ModuleNotFoundError:
+        im = ax.imshow(heat, cmap="YlGnBu_r", aspect="auto", interpolation="nearest")
+        ax.set_xticks(range(nshot))
+        ax.set_xticklabels([rf"$e_{i}$" for i in range(1, nshot + 1)])
+        ax.set_yticks(range(nshot + 1))
+        ax.set_yticklabels([rf"$p={p}$" for p in range(0, nshot + 1)])
+        cbar = plt.colorbar(im, ax=ax)
     ax.set_title("")
     ax.set_xlabel("In-Context Examples")
     ax.set_ylabel("Query insertion boundary")
-    cbar = ax.collections[0].colorbar
     cbar.set_label("Attention Flow")
 
     plt.tight_layout()
@@ -321,10 +416,21 @@ def main():
         type=str,
         default=str(Path(__file__).resolve().parents[1] / "rollout_results" / "recency_heatmap.png"),
     )
+    p.add_argument(
+        "--save_tables",
+        action="store_true",
+        help="also export the aggregated heatmap as CSV tables",
+    )
+    p.add_argument(
+        "--table_prefix",
+        type=str,
+        default=None,
+        help="output prefix for CSV tables; defaults to --out without file suffix",
+    )
     args = p.parse_args()
 
     if args.mode == "layer_vs_dist":
-        heat = build_recency_heatmap(
+        heat, count = build_recency_heatmap(
             task=args.task,
             nshot=args.nshot,
             max_samples=args.max_samples,
@@ -335,10 +441,10 @@ def main():
         save_heatmap_png(
             heat=heat,
             out_path=args.out,
-            title=f"Recency heatmap",
+            title="Recency heatmap",
         )
     else:
-        heat = build_pos_vs_example_heatmap(
+        heat, count = build_pos_vs_example_heatmap(
             task=args.task,
             nshot=args.nshot,
             max_samples=args.max_samples,
@@ -349,13 +455,33 @@ def main():
         save_pos_vs_example_png(
             heat=heat,
             out_path=args.out,
-            title=f"Recency heatmap",
+            title="Recency heatmap",
             nshot=args.nshot,
         )
 
     print(f"Saved: {args.out}")
+    if args.save_tables:
+        table_prefix = Path(args.table_prefix) if args.table_prefix else _default_table_prefix(args.out)
+        matrix_csv_path = f"{table_prefix}.matrix.csv"
+        long_csv_path = f"{table_prefix}.long.csv"
+        save_matrix_csv(
+            heat=heat,
+            out_path=matrix_csv_path,
+            mode=args.mode,
+            nshot=args.nshot,
+        )
+        save_long_csv(
+            heat=heat,
+            count=count,
+            out_path=long_csv_path,
+            mode=args.mode,
+            task=args.task,
+            position_mode=args.position_mode,
+            nshot=args.nshot,
+        )
+        print(f"Saved: {matrix_csv_path}")
+        print(f"Saved: {long_csv_path}")
 
 
 if __name__ == "__main__":
     main()
-

@@ -1270,7 +1270,7 @@ target: Originally, Leah had 32 chocolates. Her sister had 42. So in total they 
 The answer is 39.
 </answer>'''
     question_shot=f'''question: {question}
-target: '''
+Answer: \n'''
     if isinstance(nshot, bool):
          nshot = int(nshot) # False -> 0, True -> 1 (虽然 nshot 不应该为 True)
     

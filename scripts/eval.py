@@ -1,4 +1,4 @@
-import random, os, sys
+import random, os, sys, time
 from transformers import AutoConfig, AutoTokenizer, AutoModelForCausalLM, AutoModel
 import torch
 import argparse
@@ -164,6 +164,20 @@ def main(args):
                 print(f"[Rank {accelerator.process_index}/{accelerator.num_processes}] Accelerate initialized")
             else:
                 accelerator = None
+
+    def _aggregate_timing(total_inference_time, total_generation_count):
+        if accelerator is None or accelerator.num_processes <= 1:
+            return total_inference_time, total_generation_count
+        import torch.distributed as dist
+        if not dist.is_initialized():
+            return total_inference_time, total_generation_count
+        stats = torch.tensor(
+            [float(total_inference_time), float(total_generation_count)],
+            device=accelerator.device,
+            dtype=torch.float64,
+        )
+        dist.all_reduce(stats, op=dist.ReduceOp.SUM)
+        return stats[0].item(), int(stats[1].item())
     
     #开始全流程进行评估,先倒入数据集再导入模型,然后生成指令,最后进行推理得出答案进行评估
     #变成一个dataset,开始进行取值,根据query_position的位置来进行
@@ -320,7 +334,9 @@ def main(args):
             # 随机位置模式：每个样本随机选择一个位置
             results=[]
             correct_letters=[]
-            
+            total_inference_time = 0.0
+            total_generation_count = 0
+
             # 使用 tqdm 时，只在主进程显示进度条
             dataset_iter = dataset
             if accelerator is not None and accelerator.num_processes > 1:
@@ -331,7 +347,7 @@ def main(args):
                     dataset_iter = dataset
             else:
                 dataset_iter = tqdm(dataset, desc="Random Position")
-            
+
             for input in dataset_iter:
                 # 为每个样本随机选择一个位置
                 query_position = random.randint(0, nshot)
@@ -347,15 +363,21 @@ def main(args):
                 if task=='gpqa':
                     #我想设置为各个位置的prompt,变成list,每一个list取出一个值来进行转化,这次我想根据query_position的位置来取值,按这个位置放置list,这样子就很方便记录
                     #这个input是什么,能不能根据同样的input设置不同的prompt,只用在nshot的for循环下进行就可以了
+                    _t0 = time.time()
                     answer,correct_letter=generate(model,tokenizer,input,task,steps,gen_length,block_length,temperature,mode,situation,query_position,nshot)
+                    total_inference_time += time.time() - _t0
+                    total_generation_count += 1
                     correct_letters.append(correct_letter)
                 else:
                     #暂时先不考虑其他的,我想先使用thread看看效果
+                    _t0 = time.time()
                     answer=generate(model,tokenizer,input,task,steps,gen_length,block_length,temperature,mode,situation,query_position,nshot,iscot,thread,lambd=lambd,alpha=alpha,baseline_name=baseline_name,num=num)
+                    total_inference_time += time.time() - _t0
+                    total_generation_count += 1
                 #最后的result应该是一个list,包含所有的回答
                 #results可能是list[str]或者list[list[str]],如果是list[list[str]],第一个list是个数,第二个list是位置
                 results.append(answer)
-            
+
             # 如果使用 Accelerate，收集所有进程的结果
             if accelerator is not None and accelerator.num_processes > 1:
                 # 使用 PyTorch 的分布式通信收集所有进程的结果
@@ -393,8 +415,19 @@ def main(args):
                     pass
             
             #根据任务进行评测（只在主进程执行）
+            total_inference_time, total_generation_count = _aggregate_timing(
+                total_inference_time, total_generation_count
+            )
             if task!='mbpp':
                 if accelerator is None or accelerator.is_main_process:
+                    # ---- Latency statistics (Random Position) ----
+                    avg_latency = total_inference_time / total_generation_count if total_generation_count > 0 else 0.0
+                    print(f"\n{'='*50}")
+                    print(f"Time Statistics (position=random):")
+                    print(f"  Total Inference Time   : {total_inference_time:.2f} s")
+                    print(f"  Total Generation Count : {total_generation_count}")
+                    print(f"  Avg Latency per Query  : {avg_latency:.4f} s/query")
+                    print(f"{'='*50}\n")
                     if task=='gpqa':
                         eval(task,results,full_dataset,result_path,args,correct_letters,position='random')
                     #这里要对整段代码进行适配,特别是对mbpp去进行相应的适配
@@ -404,6 +437,14 @@ def main(args):
                         # acc_list.append(acc)
             else:
                 if accelerator is None or accelerator.is_main_process:
+                    # ---- Latency statistics (Random Position, mbpp) ----
+                    avg_latency = total_inference_time / total_generation_count if total_generation_count > 0 else 0.0
+                    print(f"\n{'='*50}")
+                    print(f"Time Statistics (position=random):")
+                    print(f"  Total Inference Time   : {total_inference_time:.2f} s")
+                    print(f"  Total Generation Count : {total_generation_count}")
+                    print(f"  Avg Latency per Query  : {avg_latency:.4f} s/query")
+                    print(f"{'='*50}\n")
                     from utils.eval_utils import eval_mbpp
                     #从args中获取和result_path有关的路径参数来去寻找相应的mbpp生成路径
                     result_path=getattr(args,'result_path',None)
@@ -425,7 +466,9 @@ def main(args):
             for query_position in position_list:
                 results=[]
                 correct_letters=[]
-                
+                total_inference_time = 0.0
+                total_generation_count = 0
+
                 # 使用 tqdm 时，只在主进程显示进度条
                 dataset_iter = dataset
                 if accelerator is not None and accelerator.num_processes > 1:
@@ -436,7 +479,7 @@ def main(args):
                         dataset_iter = dataset
                 else:
                     dataset_iter = tqdm(dataset, desc=f"Position {query_position}")
-                
+
                 for input in dataset_iter:
                     #开始进行推理
                     #让模型进行回答
@@ -449,11 +492,17 @@ def main(args):
                     if task=='gpqa':
                         #我想设置为各个位置的prompt,变成list,每一个list取出一个值来进行转化,这次我想根据query_position的位置来取值,按这个位置放置list,这样子就很方便记录
                         #这个input是什么,能不能根据同样的input设置不同的prompt,只用在nshot的for循环下进行就可以了
+                        _t0 = time.time()
                         answer,correct_letter=generate(model,tokenizer,input,task,steps,gen_length,block_length,temperature,mode,situation,query_position,nshot)
+                        total_inference_time += time.time() - _t0
+                        total_generation_count += 1
                         correct_letters.append(correct_letter)
                     else:
                         #暂时先不考虑其他的,我想先使用thread看看效果
+                        _t0 = time.time()
                         answer=generate(model,tokenizer,input,task,steps,gen_length,block_length,temperature,mode,situation,query_position,nshot,iscot,thread,lambd=lambd,alpha=alpha,baseline_name=baseline_name,num=num)
+                        total_inference_time += time.time() - _t0
+                        total_generation_count += 1
                     #最后的result应该是一个list,包含所有的回答
                     #results可能是list[str]或者list[list[str]],如果是list[list[str]],第一个list是个数,第二个list是位置
                     results.append(answer)
@@ -493,6 +542,19 @@ def main(args):
                         # 如果分布式未初始化，直接使用当前结果
                         pass
                 
+                # ---- Latency statistics (Vanilla ICL) ----
+                total_inference_time, total_generation_count = _aggregate_timing(
+                    total_inference_time, total_generation_count
+                )
+                if accelerator is None or accelerator.is_main_process:
+                    avg_latency = total_inference_time / total_generation_count if total_generation_count > 0 else 0.0
+                    print(f"\n{'='*50}")
+                    print(f"Time Statistics (position={query_position}):")
+                    print(f"  Total Inference Time   : {total_inference_time:.2f} s")
+                    print(f"  Total Generation Count : {total_generation_count}")
+                    print(f"  Avg Latency per Query  : {avg_latency:.4f} s/query")
+                    print(f"{'='*50}\n")
+
                 #根据任务进行评测（只在主进程执行）
                 if task!='mbpp':
                     if accelerator is None or accelerator.is_main_process:

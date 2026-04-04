@@ -366,7 +366,51 @@ def  eval_countdown_position(results,dataset):
 def collect_answer_from_response(response):
     _res = ""
 
+    def _extract_balanced_content(text, prefix):
+        start = text.find(prefix)
+        if start == -1:
+            return ""
+        i = start + len(prefix)
+        depth = 1
+        chars = []
+        while i < len(text):
+            ch = text[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return "".join(chars)
+            chars.append(ch)
+            i += 1
+        return ""
+
+    def _has_balanced_braces(text):
+        depth = 0
+        for ch in text:
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth < 0:
+                    return False
+        return depth == 0
+
+    def _clean_answer(text):
+        return text.strip('.').strip()
+
     # ------------------ 第一阶段：匹配 <answer> 标签 ------------------
+    try:
+        answer_start = response.find("<answer>")
+        answer_end = response.find("</answer>")
+        answer_region = response[answer_start:answer_end] if answer_start != -1 and answer_end != -1 else response
+        for prefix in (r"boxed{", r"framebox{"):
+            _res = _extract_balanced_content(answer_region, prefix)
+            if _res != "":
+                return _clean_answer(_res)
+    except Exception:
+        pass
+
     try:
         regex_list_tag = [
             r"<answer>.*?boxed{(.*?)}.*?</answer>",
@@ -383,9 +427,19 @@ def collect_answer_from_response(response):
         pass
 
     if _res != "":
-        return _res.strip('.').strip()
+        cleaned = _clean_answer(_res)
+        if _has_balanced_braces(cleaned):
+            return cleaned
 
     # ------------------ 第二阶段：匹配普通 boxed/framebox ------------------
+    try:
+        for prefix in (r"boxed{", r"framebox{"):
+            _res = _extract_balanced_content(response, prefix)
+            if _res != "":
+                return _clean_answer(_res)
+    except Exception:
+        pass
+
     try:
         regex_list_box = [
             r"boxed{(.*?)}",
@@ -401,7 +455,12 @@ def collect_answer_from_response(response):
     except Exception:
         pass
 
-    return _res.strip('.').strip()
+    if _res != "":
+        cleaned = _clean_answer(_res)
+        if _has_balanced_braces(cleaned):
+            return cleaned
+
+    return _clean_answer(_res)
 
 #一般都是用in进行匹配
 def eval_math500(results,dataset,result_path,args,position,iswrite=True):

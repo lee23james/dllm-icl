@@ -210,7 +210,7 @@ echo "--------------------------------测试sudoku指令:构造prompt看看不�
 echo "--------------------------------eval_gsm8k--------------------------------"
 
 python scripts/eval.py \
-    --model_name /home/share/model_weight/llada/LLaDA-8B-Baset \
+    --model_name /hy-tmp/dllm-icl/model/LLaDA-8B-Base \
     --device cuda:0 \
     --gen_length 64 \
     --steps 64 \
@@ -224,32 +224,32 @@ python scripts/eval.py \
     --seed 1234 \
     --max_samples 1
 
-python scripts/eval.py \
-    --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
-    --device cuda:0 \
-    --gen_length 128 \
-    --steps 128 \
-    --block_length 128 \
-    --temperature 0.0 \
-    --mode original \
-    --task gsm8k \
-    --nshot 4 \
-    --data_path ./data/gsm8k.jsonl \
-    --result_path ./results/gsm8k_results \
-    --seed 1234 \
-    --max_samples 1
+# python scripts/eval.py \
+#     --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
+#     --device cuda:0 \
+#     --gen_length 128 \
+#     --steps 128 \
+#     --block_length 128 \
+#     --temperature 0.0 \
+#     --mode original \
+#     --task gsm8k \
+#     --nshot 4 \
+#     --data_path ./data/gsm8k.jsonl \
+#     --result_path ./results/gsm8k_results \
+#     --seed 1234 \
+#     --max_samples 1
 
-python scripts/eval.py \
-    --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
-    --device cuda:0 \
-    --gen_length 512 \
-    --steps 512 \
-    --block_length 512 \
-    --temperature 0.0 \
-    --mode original \
-    --task gsm8k \
-    --nshot 4 \
-    --data_path ./data/gsm8k.jsonl \
-    --result_path ./results/gsm8k_results \
-    --seed 1234 \
-    --max_samples 1
+# python scripts/eval.py \
+#     --model_name /home/share/model_weight/llada/LLaDA-8B-Base \
+#     --device cuda:0 \
+#     --gen_length 512 \
+#     --steps 512 \
+#     --block_length 512 \
+#     --temperature 0.0 \
+#     --mode original \
+#     --task gsm8k \
+#     --nshot 4 \
+#     --data_path ./data/gsm8k.jsonl \
+#     --result_path ./results/gsm8k_results \
+#     --seed 1234 \
+#     --max_samples 1

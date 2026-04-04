@@ -6,6 +6,7 @@ import os, sys, json
 import numpy as np
 from typing import List, Dict, Tuple
 from transformers.models.electra.modeling_electra import ElectraSelfAttention
+import time
 try:
     import accelerate
     ACCELERATE_AVAILABLE = True
@@ -73,7 +74,7 @@ def generate_improve(model,tokenizer,input,task,steps,gen_length,block_length,te
         else:
             raise NotImplementedError(f"Task {task} not implemented.")
     elif mode=='conf_sampler':
-        
+        raise NotImplementedError("Mode conf_sampler not implemented in generate_improve.")
     else:
         raise NotImplementedError(f"Mode {mode} not implemented.")
     #这个是后验的阶段
@@ -301,6 +302,9 @@ def main(args):
     answers=[]
     zero_answers=[]#对照组
     
+    total_inference_time = 0.0
+    total_generation_count = 0
+    
     # 使用 tqdm 时，只在主进程显示进度条
     dataset_iter = dataset
     if accelerator is not None and accelerator.num_processes > 1:
@@ -320,7 +324,9 @@ def main(args):
         else:
             situation='base'
         
+        start_time = time.time()
         best_position=select_position(model,tokenizer,version,nshot,input_item,task,mode,int(steps/4),gen_length,block_length,temperature,situation,lamda1,lamda2)
+
         if accelerator is not None:
             print(f"[Rank {accelerator.process_index}] Best position for input {idx} is {best_position}")
         else:
@@ -328,6 +334,11 @@ def main(args):
         #开始进行测试
         #我得设置对照组,看看放在最后对比结果
         answer=generate(model,tokenizer,input_item,task,steps,gen_length,block_length,temperature,mode,situation,best_position,nshot)
+        end_time = time.time()
+        elapsed = end_time - start_time
+        total_inference_time += elapsed
+        # nshot+1 次 select_position 内的生成 + 1 次 final generate = nshot+2
+        total_generation_count += (nshot + 2)
         #之后还要补充代码的健全性
         answers.append(answer)
         if compute_zero:
@@ -388,7 +399,14 @@ def main(args):
                 print(f"Zero Accuracy: {zero_acc:.4f}")
             else:
                 print("Zero Accuracy: Not available (task may not return accuracy)")
-        #把产生的结果记录一下
+        
+        avg_latency = total_inference_time / total_generation_count if total_generation_count > 0 else 0.0
+        print(f"\n{'='*50}")
+        print(f"Time Statistics:")
+        print(f"  Total Inference Time: {total_inference_time:.2f} seconds")
+        print(f"  Total Generation Count: {total_generation_count}")
+        print(f"  Average Latency per Query: {avg_latency:.4f} seconds/query")
+        print(f"{'='*50}\n")
 
 #这里我应该提供给
 if __name__=='__main__':
